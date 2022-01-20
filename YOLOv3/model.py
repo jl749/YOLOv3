@@ -5,15 +5,9 @@ Implementation of YOLOv3 architecture
 import torch
 import torch.nn as nn
 
-
-import numpy as np
 """ 
-Information about architecture config:
 Tuple is structured by (filters, kernel_size, stride) 
 Every conv same padding.
-List is structured by "B" indicating a residual block followed by the number of repeats
-"S" is for scale prediction block and computing the yolo loss
-"U" is for upsampling the feature map and concatenating with a previous layer
 """
 config = [
     # input = (BATCH_SIZE, 3, 416, 416)
@@ -23,9 +17,9 @@ config = [
     (128, 3, 2),             # (128, 104, 104)
     ["ResidualBlock", 2],    # (128, 104, 104)
     (256, 3, 2),             # (256, 52, 52)
-    ["ResidualBlock", 8],    # (256, 52, 52)
+    ["ResidualBlock", 8],    # (256, 52, 52)   ### CONCAT later(after Upsample2)
     (512, 3, 2),             # (512, 26, 26)
-    ["ResidualBlock", 8],    # (512, 26, 26)
+    ["ResidualBlock", 8],    # (512, 26, 26)   ### CONCAT later(after Upsample1)
     (1024, 3, 2),            # (1024, 13, 13)
     ["ResidualBlock", 4],    # (1024, 13, 13)
     # Darknet-53 -- feature extractor (encoding)
@@ -33,13 +27,14 @@ config = [
     (512, 1, 1),             # (512, 13, 13)
     (1024, 3, 1),            # (1024, 13, 13)
     "ScalePrediction",       # (1024, 13, 13)  -->  (512, 13, 13)  -->  (512, 13, 13) result1
+    # (pass info for the next result, don't just waste it might be useful)
     (256, 1, 1),             # (256, 13, 13)
-    "UpSample",              # (256, 26, 26)
+    "UpSample",              # (256, 26, 26)   ### CONCAT dim=1 (channels)
     (256, 1, 1),             # (256, 26, 26)
     (512, 3, 1),             # (512, 26, 26)
     "ScalePrediction",       # (512, 26, 26)  -->  (256, 26, 26)  --> (256, 26, 26) result2
     (128, 1, 1),             # (128, 26, 26)
-    "UpSample",              # (128, 52, 52)
+    "UpSample",              # (128, 52, 52)   ### CONCAT dim=1 (channels)
     (128, 1, 1),             # (128, 52, 52)
     (256, 3, 1),             # (256, 52, 52)
     "ScalePrediction",       # (256,52, 52)  -->  (128, 52, 52)  -->  (128, 52, 52) result3
@@ -97,26 +92,26 @@ class ScalePrediction(nn.Module):
 
 
 class YOLOv3(nn.Module):
-    def __init__(self, c1=3, num_classes=80):  # PASCAL VOC=20, COCO=80
+    def __init__(self, c1=3, num_classes=80):  # PASCAL_VOC=20, COCO=80
         super().__init__()
         self.c1 = c1
         self.C = num_classes
         self.layers = self._create_conv_layers()
 
     def forward(self, x):
-        outputs = []  # for each scale
+        outputs = []  # for each ScalePrediction
         route_connections = []
         for i, layer in enumerate(self.layers):
             if isinstance(layer, ScalePrediction):
                 outputs.append(layer(x))
-                print('###')
-                print(layer.__class__.__name__, '--------', list(x.shape))
+                # print('###')
+                # print(layer.__class__.__name__, '--------', list(x.shape))
                 continue
 
             x = layer(x)
-            print(layer.__class__.__name__, '--------', list(x.shape))
-            if i == 10:
-                print('\n')
+            # print(layer.__class__.__name__, '--------', list(x.shape))
+            # if i == 10:  # end of Darknet-53
+            #     print('\n')
 
             if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:
                 route_connections.append(x)
@@ -137,21 +132,25 @@ class YOLOv3(nn.Module):
                 layers.append(
                     CNNBlock(c1, c2, kernel_size=k, stride=s, padding=1 if k == 3 else 0)  # Conv + BN + LeakyReLU
                 )
-                c1 = c2
+                c1 = c2  # Conv output channels --> next input
             elif isinstance(layer, list):  # ResidualBlock
                 num_repeats = layer[1]
                 layers.append(ResidualBlock(c1, num_repeats=num_repeats))
-            elif isinstance(layer, str):  #
+            elif isinstance(layer, str):  # ConvolutionalSet + ScalePrediction
                 if layer == "ScalePrediction":
                     layers += [
-                        ResidualBlock(c1, use_residual=False, num_repeats=1),
-                        CNNBlock(c1, c1 // 2, kernel_size=1),
+                        # === ConvolutionalSet === #
+                        ResidualBlock(c1, use_residual=False, num_repeats=1),  # bottleneck
+                        CNNBlock(c1, c1 // 2, kernel_size=1),  # 1x1 kernel that reduces channels by half
+                        # ======================== #
                         ScalePrediction(c1 // 2, num_classes=self.C)
                     ]
-                    c1 = c1 // 2
+                    c1 = c1 // 2  # ConvolutionalSet output --> next input
                 elif layer == "UpSample":
-                    layers.append(nn.Upsample(scale_factor=2))
-                    c1 = c1 * 3
+                    layers.append(nn.Upsample(scale_factor=2))  # mode={nearest(DEFAULT) OR bilinear}
+                    c1 = c1 * 3  # concatenate right after the Upsample
+                    # --> x = torch.cat([x, route_connections[-1]], dim=1)
+                    # 128 --> 128+256, 256 --> 256+512
 
         return layers
 
@@ -163,9 +162,9 @@ if __name__ == "__main__":
     dummy_input = torch.randn((2, 3, IMAGE_SIZE, IMAGE_SIZE))
     out = model(dummy_input)
 
-    print()
+    print(len(out))
     print(out[0].shape, out[1].shape, out[2].shape)
-    # assert model(dummy_input)[0].shape == (2, 3, IMAGE_SIZE // 32, IMAGE_SIZE // 32, num_classes + 5)
-    # assert model(dummy_input)[1].shape == (2, 3, IMAGE_SIZE // 16, IMAGE_SIZE // 16, num_classes + 5)
-    # assert model(dummy_input)[2].shape == (2, 3, IMAGE_SIZE // 8, IMAGE_SIZE // 8, num_classes + 5)
+    assert model(dummy_input)[0].shape == (2, 3, IMAGE_SIZE // 32, IMAGE_SIZE // 32, num_classes + 5)
+    assert model(dummy_input)[1].shape == (2, 3, IMAGE_SIZE // 16, IMAGE_SIZE // 16, num_classes + 5)
+    assert model(dummy_input)[2].shape == (2, 3, IMAGE_SIZE // 8, IMAGE_SIZE // 8, num_classes + 5)
     print("Success!")
