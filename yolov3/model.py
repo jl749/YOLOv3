@@ -1,7 +1,7 @@
 """
-Implementation of YOLOv3 architecture
+Implementation of yolov3 architecture
 """
-# import pytorch_lightning as pl
+from pytorch_lightning.core.lightning import LightningModule
 import torch
 import torch.nn as nn
 
@@ -91,8 +91,8 @@ class ScalePrediction(nn.Module):
         )
 
 
-class YOLOv3(nn.Module):
-    def __init__(self, c1=3, num_classes=80):  # PASCAL_VOC=20, COCO=80
+class YOLOv3(LightningModule):
+    def __init__(self, c1=3, num_classes=20):  # PASCAL_VOC=20, COCO=80
         super().__init__()
         self.c1 = c1
         self.C = num_classes
@@ -121,6 +121,15 @@ class YOLOv3(nn.Module):
                 route_connections.pop()
 
         return outputs
+
+    def training_step(self, batch, batch_idx):
+        """
+        return loss
+        :param batch:
+        :param batch_idx:
+        :return:
+        """
+        pass  # return loss
 
     def _create_conv_layers(self):
         layers = nn.ModuleList()
@@ -153,6 +162,13 @@ class YOLOv3(nn.Module):
                     # 128 --> 128+256, 256 --> 256+512
 
         return layers
+
+    def configure_optimizers(self):
+        """
+        The LightningModule is subclassing Module --> you can access its children parameters directly with self.parameters().
+        :return:
+        """
+        return torch.optim.Adam(self.parameters(), lr=1e-3)  # self.parameters() == model.parameters()
 
 
 if __name__ == "__main__":
