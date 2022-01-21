@@ -137,16 +137,17 @@ def test():
     for x, y in loader:
         boxes = []
 
-        for i in range(y[0].shape[1]):
-            anchor = scaled_anchors[i]
+        # small, medium, big predictions all into 0~1 scale again and plot bboxes
+        for i in range(y[0].shape[1]):  # i = 0, 1, 2
+            anchor = scaled_anchors[i]  # (3, 2)
             print(anchor.shape)
             print(y[i].shape)
-            boxes += cells_to_bboxes(
-                y[i], is_preds=False, S=y[i].shape[2], anchors=anchor
+            boxes += cells_to_bboxes(  # back to 0~1 scale bboxes
+                y[i], is_preds=False, split_size=y[i].shape[2], anchors=anchor
             )[0]
         boxes = nms(boxes, iou_threshold=1, threshold=0.7, box_format="midpoint")
         print(boxes)
-        plot_image(x[0].permute(1, 2, 0).to("cpu"), boxes)
+        plot_image(x[0].permute(1, 2, 0).to("cpu"), boxes)  # RGB --> BRG
 
 
 if __name__ == "__main__":
