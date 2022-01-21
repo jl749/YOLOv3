@@ -70,7 +70,7 @@ class VOCDataset(torch.utils.data.Dataset):
             iou_anchors = iou(torch.tensor(box[2:4]), self.anchors)  # iou between label boc and all the anchor box candidates
             anchor_indices = iou_anchors.argsort(descending=True, dim=0)
             x, y, width, height, class_label = box
-            has_anchor = [False] * 3  # each scale should have one anchor
+            has_anchor = [False] * 3  # each scale should have one anchor??? why??? nms anyway???
 
             for anchor_idx in anchor_indices:  # highest IoU to lowest
                 scale_idx = anchor_idx // self.num_anchors_per_scale  # idx // 3  --> let you know which scale you are looking at (small, medium. big)
