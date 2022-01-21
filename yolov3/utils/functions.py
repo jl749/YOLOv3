@@ -1,12 +1,12 @@
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
-import os
-import random
 import torch
 
+import yolov3.config as config
 from collections import Counter
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 
 def iou_Coor(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor,
@@ -132,17 +132,6 @@ def cells_to_bboxes(predictions, anchors, split_size, is_preds=True):
     w_h = 1 / S * box_predictions[..., 2:4]
     converted_bboxes = torch.cat((best_class, scores, x, y, w_h), dim=-1).reshape(BATCH_SIZE, num_anchors * S * S, 6)
     return converted_bboxes.tolist()
-
-
-def seed_everything(seed=42):
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 # torchvision.ops.nms()
@@ -319,66 +308,171 @@ def plot_image(image, boxes):
         ax.add_patch(rect)
 
     plt.show()
-##################################################################################################
 
 
-def get_bboxes(
-        loader: torch.utils.data.DataLoader,
-        model: torch.nn.Module,
-        iou_threshold: float,
-        threshold: float,
-        pred_format="cells",
-        box_format="midpoint",
-        device="cuda",
+def plot_couple_examples(model, loader, thresh, iou_thresh, anchors):
+    model.eval()
+    x, y = next(iter(loader))
+    x = x.to("cuda")
+    with torch.no_grad():
+        out = model(x)
+        bboxes = [[] for _ in range(x.shape[0])]
+        for i in range(3):
+            batch_size, A, S, _, _ = out[i].shape
+            anchor = anchors[i]
+            boxes_scale_i = cells_to_bboxes(
+                out[i], anchor, S=S, is_preds=True
+            )
+            for idx, (box) in enumerate(boxes_scale_i):
+                bboxes[idx] += box
+
+        model.train()
+
+    for i in range(batch_size):
+        nms_boxes = non_max_suppression(
+            bboxes[i], iou_threshold=iou_thresh, threshold=thresh, box_format="midpoint",
+        )
+        plot_image(x[i].permute(1,2,0).detach().cpu(), nms_boxes)
+
+
+def check_class_accuracy(model, loader, threshold):
+    model.eval()
+    tot_class_preds, correct_class = 0, 0
+    tot_noobj, correct_noobj = 0, 0
+    tot_obj, correct_obj = 0, 0
+
+    for idx, (x, y) in enumerate(tqdm(loader)):
+        x = x.to(config.DEVICE)
+        with torch.no_grad():
+            out = model(x)
+
+        for i in range(3):
+            y[i] = y[i].to(config.DEVICE)
+            obj = y[i][..., 0] == 1 # in paper this is Iobj_i
+            noobj = y[i][..., 0] == 0  # in paper this is Iobj_i
+
+            correct_class += torch.sum(
+                torch.argmax(out[i][..., 5:][obj], dim=-1) == y[i][..., 5][obj]
+            )
+            tot_class_preds += torch.sum(obj)
+
+            obj_preds = torch.sigmoid(out[i][..., 0]) > threshold
+            correct_obj += torch.sum(obj_preds[obj] == y[i][..., 0][obj])
+            tot_obj += torch.sum(obj)
+            correct_noobj += torch.sum(obj_preds[noobj] == y[i][..., 0][noobj])
+            tot_noobj += torch.sum(noobj)
+
+    print(f"Class accuracy is: {(correct_class/(tot_class_preds+1e-16))*100:2f}%")
+    print(f"No obj accuracy is: {(correct_noobj/(tot_noobj+1e-16))*100:2f}%")
+    print(f"Obj accuracy is: {(correct_obj/(tot_obj+1e-16))*100:2f}%")
+    model.train()
+
+
+def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
+    from yolov3.datasets import VOCDataset
+
+    IMAGE_SIZE = config.IMAGE_SIZE
+    train_dataset = VOCDataset(
+        train_csv_path,
+        transform=config.train_transforms,
+        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        img_dir=config.IMG_DIR,
+        label_dir=config.LABEL_DIR,
+        anchors=config.ANCHORS,
+    )
+    test_dataset = VOCDataset(
+        test_csv_path,
+        transform=config.test_transforms,
+        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        img_dir=config.IMG_DIR,
+        label_dir=config.LABEL_DIR,
+        anchors=config.ANCHORS,
+    )
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=config.PIN_MEMORY,
+        shuffle=True,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        dataset=test_dataset,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=config.PIN_MEMORY,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    train_eval_dataset = VOCDataset(
+        train_csv_path,
+        transform=config.test_transforms,
+        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        img_dir=config.IMG_DIR,
+        label_dir=config.LABEL_DIR,
+        anchors=config.ANCHORS,
+    )
+    train_eval_loader = DataLoader(
+        dataset=train_eval_dataset,
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=config.PIN_MEMORY,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    return train_loader, test_loader, train_eval_loader
+
+
+def get_evaluation_bboxes(
+    loader,
+    model,
+    iou_threshold,
+    anchors,
+    threshold,
+    box_format="midpoint",
+    device="cuda",
 ):
-    """
-    obtain bounding boxes using given dataset and model
-    :param loader: train/test DataLoader
-    :param model: model to be used for predictions
-    :param iou_threshold: iou threshold to be used on non-max suppression
-    :param threshold: object confidence threshold
-    :param pred_format:
-    :param box_format:
-    :param device:
-    :return: predicted box, expected box
-    """
-    all_pred_boxes = []
-    all_true_boxes = []
-
     # make sure model is in eval before get bboxes
     model.eval()
     train_idx = 0
-
-    for batch_idx, (x, labels) in enumerate(loader):
-        x = x.to(device)  # train image, (BATCH_SIZE, 3, 448, 448)
-        labels = labels.to(device)  # train expected labels, (BATCH_SIZE, 7, 7, 30)
+    all_pred_boxes = []
+    all_true_boxes = []
+    for batch_idx, (x, labels) in enumerate(tqdm(loader)):
+        x = x.to(device)
 
         with torch.no_grad():
             predictions = model(x)
 
         batch_size = x.shape[0]
-        true_bboxes = cellboxes_to_boxes(
-            labels)  # [predicted_class, best_confidence, ...converted x,y,w,h ...], (BATCH_SIZE, S*S, 6)
-        bboxes = cellboxes_to_boxes(predictions)
+        bboxes = [[] for _ in range(batch_size)]
+        for i in range(3):
+            S = predictions[i].shape[2]
+            anchor = torch.tensor([*anchors[i]]).to(device) * S
+            boxes_scale_i = cells_to_bboxes(
+                predictions[i], anchor, split_size=S, is_preds=True
+            )
+            for idx, (box) in enumerate(boxes_scale_i):
+                bboxes[idx] += box
+
+        # we just want one bbox for each label, not one for each scale
+        true_bboxes = cells_to_bboxes(
+            labels[2], anchor, split_size=S, is_preds=False
+        )
 
         for idx in range(batch_size):
             nms_boxes = non_max_suppression(
-                bboxes[idx],  # (BATCH_SIZE, S*S, 6)  -->  (S*S, 6)
+                bboxes[idx],
                 iou_threshold=iou_threshold,
                 threshold=threshold,
                 box_format=box_format,
             )
-            if len(nms_boxes) > 0:
-                print(nms_boxes)
-            # if batch_idx == 0 and idx == 0:
-            #    plot_image(x[idx].permute(1,2,0).to("cpu"), nms_boxes)
-            #    print(nms_boxes)
 
             for nms_box in nms_boxes:
                 all_pred_boxes.append([train_idx] + nms_box)
 
             for box in true_bboxes[idx]:
-                # many will get converted to 0 pred
                 if box[1] > threshold:
                     all_true_boxes.append([train_idx] + box)
 
@@ -388,80 +482,158 @@ def get_bboxes(
     return all_pred_boxes, all_true_boxes
 
 
-def convert_cellboxes(predictions, S=7):  # train/predicted labels, (BATCH_SIZE, 7, 7, 30)
-    """
-    Converts bounding boxes output from Yolo with
-    an image split size of S into entire image ratios
-    rather than relative to cell ratios. (0~1 --scale up--> 0~448)
-    output --> (BATCH_SIZE, 7, 7, 6) [predicted_class, best_confidence, ...converted x,y,w,h ...]
-    """
-
-    predictions = predictions.to("cpu")
-    batch_size = predictions.shape[0]
-    predictions = predictions.reshape(batch_size, 7, 7, 30)
-    bboxes1 = predictions[..., 21:25]  # x1,y1,w1,h1
-    bboxes2 = predictions[..., 26:30]  # x2,y2,w2,h2
-    scores = torch.cat(
-        (predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0
-    )  # (2, BATCH_SIZE, 7, 7) ---> 1 or 0
-
-    best_box = scores.argmax(0).unsqueeze(-1)  # (BATCH_SIZE, 7, 7, 1)
-    best_boxes = bboxes1 * (
-                1 - best_box) + best_box * bboxes2  # only best boxes (1 or 0) per cell  --> (BATCH_SIZE, 7, 7, 4)
-    cell_indices = torch.arange(S).repeat(batch_size, S, 1).unsqueeze(-1)  # (BATCH_SIZE, 7, 7->(arange(7)), 1)
-
-    # find x,y coordinates (grid-wise 0~1 --scale down--> whole-image-wise 0~1)
-    x = 1 / S * (best_boxes[..., :1] + cell_indices)  # (BATCH_SIZE, 7, 7, 1)
-    # https://github.com/jl749/myYOLO/issues/3#issuecomment-1012911442
-    y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))  # (BATCH_SIZE, 7, 7, 1), permute swap 7, 7
-    w_h = 1 / S * best_boxes[..., 2:4]  # (BATCH_SIZE, 7, 7, 2)  rescale w,h as x,y has been resacled too
-
-    converted_bboxes = torch.cat((x, y, w_h), dim=-1)  # (BATCH_SIZE, 7, 7, 4)
-
-    # among 20 classes find the highest (BATCH_SIZE, 7, 7)  --unsqueeze(-1)-->  (BATCH_SIZE, 7, 7, 1)
-    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1)
-    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(
-        -1
-    )  # (BATCH_SIZE, 7, 7, 1)
-
-    # wrap the final converted output
-    converted_preds = torch.cat(
-        (predicted_class, best_confidence, converted_bboxes), dim=-1
-    )  # (BATCH_SIZE, 7, 7, 6)
-
-    return converted_preds
-
-
-def cellboxes_to_boxes(out, S=7):  # out = train/predicted labels, (BATCH_SIZE, 7, 7, 30)
-    """
-    (BATCH_SIZE, S, S, 6)  -->  (BATCH_SIZE, S*S, 6)
-    :param out: train/predicted labels, (BATCH_SIZE, 7, 7, 30)
-    :param S: split_size
-    :return: reshaped [predicted_class, best_confidence, ...converted x,y,w,h ...] info, (BATCH_SIZE, S*S, 6)
-    """
-    batch_size = out.shape[0]
-
-    converted_pred = convert_cellboxes(out).reshape(batch_size, S * S, -1)  # (BATCH_SIZE, 7, 7, 6)
-    converted_pred[..., 0] = converted_pred[..., 0].long()  # long() == self.to(torch.int64)
-    all_bboxes = []
-
-    for ex_idx in range(batch_size):
-        bboxes = []
-        # for every batch for every cell
-        for bbox_idx in range(S * S):
-            # converted_pred[0, 0, :]  -->  (1, 6)
-            bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
-        all_bboxes.append(bboxes)
-
-    return all_bboxes  # (BATCH_SIZE, S*S, 6)
-
-
-def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
+def save_checkpoint(model, optimizer, filename="my_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
-    torch.save(state, filename)
+    checkpoint = {
+        "state_dict": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+    }
+    torch.save(checkpoint, filename)
 
 
-def load_checkpoint(checkpoint, model, optimizer):
+def load_checkpoint(checkpoint_file, model, optimizer, lr):
     print("=> Loading checkpoint")
+    checkpoint = torch.load(checkpoint_file, map_location=config.DEVICE)
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
+
+    # If we don't do this then it will just have learning rate of old checkpoint
+    # and it will lead to many hours of debugging \:
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = lr
+##################################################################################################
+
+
+# def get_bboxes(
+#         loader: torch.utils.data.DataLoader,
+#         model: torch.nn.Module,
+#         iou_threshold: float,
+#         threshold: float,
+#         pred_format="cells",
+#         box_format="midpoint",
+#         device="cuda",
+# ):
+#     """
+#     obtain bounding boxes using given dataset and model
+#     :param loader: train/test DataLoader
+#     :param model: model to be used for predictions
+#     :param iou_threshold: iou threshold to be used on non-max suppression
+#     :param threshold: object confidence threshold
+#     :param pred_format:
+#     :param box_format:
+#     :param device:
+#     :return: predicted box, expected box
+#     """
+#     all_pred_boxes = []
+#     all_true_boxes = []
+#
+#     # make sure model is in eval before get bboxes
+#     model.eval()
+#     train_idx = 0
+#
+#     for batch_idx, (x, labels) in enumerate(loader):
+#         x = x.to(device)  # train image, (BATCH_SIZE, 3, 448, 448)
+#         labels = labels.to(device)  # train expected labels, (BATCH_SIZE, 7, 7, 30)
+#
+#         with torch.no_grad():
+#             predictions = model(x)
+#
+#         batch_size = x.shape[0]
+#         true_bboxes = cellboxes_to_boxes(
+#             labels)  # [predicted_class, best_confidence, ...converted x,y,w,h ...], (BATCH_SIZE, S*S, 6)
+#         bboxes = cellboxes_to_boxes(predictions)
+#
+#         for idx in range(batch_size):
+#             nms_boxes = non_max_suppression(
+#                 bboxes[idx],  # (BATCH_SIZE, S*S, 6)  -->  (S*S, 6)
+#                 iou_threshold=iou_threshold,
+#                 threshold=threshold,
+#                 box_format=box_format,
+#             )
+#             if len(nms_boxes) > 0:
+#                 print(nms_boxes)
+#             # if batch_idx == 0 and idx == 0:
+#             #    plot_image(x[idx].permute(1,2,0).to("cpu"), nms_boxes)
+#             #    print(nms_boxes)
+#
+#             for nms_box in nms_boxes:
+#                 all_pred_boxes.append([train_idx] + nms_box)
+#
+#             for box in true_bboxes[idx]:
+#                 # many will get converted to 0 pred
+#                 if box[1] > threshold:
+#                     all_true_boxes.append([train_idx] + box)
+#
+#             train_idx += 1
+#
+#     model.train()
+#     return all_pred_boxes, all_true_boxes
+
+
+# def convert_cellboxes(predictions, S=7):  # train/predicted labels, (BATCH_SIZE, 7, 7, 30)
+#     """
+#     Converts bounding boxes output from Yolo with
+#     an image split size of S into entire image ratios
+#     rather than relative to cell ratios. (0~1 --scale up--> 0~448)
+#     output --> (BATCH_SIZE, 7, 7, 6) [predicted_class, best_confidence, ...converted x,y,w,h ...]
+#     """
+#
+#     predictions = predictions.to("cpu")
+#     batch_size = predictions.shape[0]
+#     predictions = predictions.reshape(batch_size, 7, 7, 30)
+#     bboxes1 = predictions[..., 21:25]  # x1,y1,w1,h1
+#     bboxes2 = predictions[..., 26:30]  # x2,y2,w2,h2
+#     scores = torch.cat(
+#         (predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0
+#     )  # (2, BATCH_SIZE, 7, 7) ---> 1 or 0
+#
+#     best_box = scores.argmax(0).unsqueeze(-1)  # (BATCH_SIZE, 7, 7, 1)
+#     best_boxes = bboxes1 * (
+#                 1 - best_box) + best_box * bboxes2  # only best boxes (1 or 0) per cell  --> (BATCH_SIZE, 7, 7, 4)
+#     cell_indices = torch.arange(S).repeat(batch_size, S, 1).unsqueeze(-1)  # (BATCH_SIZE, 7, 7->(arange(7)), 1)
+#
+#     # find x,y coordinates (grid-wise 0~1 --scale down--> whole-image-wise 0~1)
+#     x = 1 / S * (best_boxes[..., :1] + cell_indices)  # (BATCH_SIZE, 7, 7, 1)
+#     # https://github.com/jl749/myYOLO/issues/3#issuecomment-1012911442
+#     y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))  # (BATCH_SIZE, 7, 7, 1), permute swap 7, 7
+#     w_h = 1 / S * best_boxes[..., 2:4]  # (BATCH_SIZE, 7, 7, 2)  rescale w,h as x,y has been resacled too
+#
+#     converted_bboxes = torch.cat((x, y, w_h), dim=-1)  # (BATCH_SIZE, 7, 7, 4)
+#
+#     # among 20 classes find the highest (BATCH_SIZE, 7, 7)  --unsqueeze(-1)-->  (BATCH_SIZE, 7, 7, 1)
+#     predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1)
+#     best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(
+#         -1
+#     )  # (BATCH_SIZE, 7, 7, 1)
+#
+#     # wrap the final converted output
+#     converted_preds = torch.cat(
+#         (predicted_class, best_confidence, converted_bboxes), dim=-1
+#     )  # (BATCH_SIZE, 7, 7, 6)
+#
+#     return converted_preds
+
+
+# def cellboxes_to_boxes(out, S=7):  # out = train/predicted labels, (BATCH_SIZE, 7, 7, 30)
+#     """
+#     (BATCH_SIZE, S, S, 6)  -->  (BATCH_SIZE, S*S, 6)
+#     :param out: train/predicted labels, (BATCH_SIZE, 7, 7, 30)
+#     :param S: split_size
+#     :return: reshaped [predicted_class, best_confidence, ...converted x,y,w,h ...] info, (BATCH_SIZE, S*S, 6)
+#     """
+#     batch_size = out.shape[0]
+#
+#     converted_pred = convert_cellboxes(out).reshape(batch_size, S * S, -1)  # (BATCH_SIZE, 7, 7, 6)
+#     converted_pred[..., 0] = converted_pred[..., 0].long()  # long() == self.to(torch.int64)
+#     all_bboxes = []
+#
+#     for ex_idx in range(batch_size):
+#         bboxes = []
+#         # for every batch for every cell
+#         for bbox_idx in range(S * S):
+#             # converted_pred[0, 0, :]  -->  (1, 6)
+#             bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
+#         all_bboxes.append(bboxes)
+#
+#     return all_bboxes  # (BATCH_SIZE, S*S, 6)
+

@@ -1,11 +1,27 @@
+import os
+import random
+from pathlib import Path
 import albumentations as A
 import cv2
+import numpy as np
 import torch
 
 from albumentations.pytorch import ToTensorV2
-from yolov3.utils import seed_everything
 
-DATASET = 'PASCAL_VOC'
+
+def seed_everything(seed=42):
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR.joinpath('data')
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 seed_everything()  # If you want deterministic behavior
 NUM_WORKERS = 4
@@ -14,17 +30,17 @@ IMAGE_SIZE = 416
 NUM_CLASSES = 20
 LEARNING_RATE = 1e-5
 WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 100
+NUM_EPOCHS = 10
 CONF_THRESHOLD = 0.05
 MAP_IOU_THRESH = 0.5
 NMS_IOU_THRESH = 0.45
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 PIN_MEMORY = True
-LOAD_MODEL = True
+LOAD_MODEL = False
 SAVE_MODEL = True
 CHECKPOINT_FILE = "checkpoint.pth.tar"
-IMG_DIR = DATASET + "/images/"
-LABEL_DIR = DATASET + "/labels/"
+IMG_DIR = DATA_DIR.joinpath("images")
+LABEL_DIR = DATA_DIR.joinpath("labels")
 
 ANCHORS = [
     [(0.28, 0.22), (0.38, 0.48), (0.9, 0.78)],

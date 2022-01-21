@@ -2,6 +2,7 @@ from torchvision.ops import box_iou
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from yolov3.utils.functions import iou_Coor
 
 
 class YoloLoss(pl.LightningModule):
@@ -27,7 +28,7 @@ class YoloLoss(pl.LightningModule):
         #   FOR NO OBJECT LOSS    #
         # ======================= #
 
-        no_object_loss = self.bce(
+        no_object_loss = self.bce(  # bce of noobj prob
             (predictions[..., 0:1][noobj]), (target[..., 0:1][noobj]),
         )
 
@@ -37,7 +38,8 @@ class YoloLoss(pl.LightningModule):
 
         anchors = anchors.reshape(1, 3, 1, 1, 2)  # anchor input = 3X2 (3 anchors each have w,h)
         box_preds = torch.cat([self.sigmoid(predictions[..., 1:3]), torch.exp(predictions[..., 3:5]) * anchors], dim=-1)
-        ious = box_iou(box_preds[obj], target[..., 1:5][obj]).detach()
+        # ious = box_iou(box_preds[obj], target[..., 1:5][obj]).detach()
+        ious = iou_Coor(box_preds[obj], target[..., 1:5][obj]).detach()  # detached obj grad will not be tracked
         object_loss = self.mse(self.sigmoid(predictions[..., 0:1][obj]), ious * target[..., 0:1][obj])
 
         # ======================== #

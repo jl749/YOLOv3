@@ -165,7 +165,7 @@ class YOLOv3(LightningModule):
 
     def configure_optimizers(self):
         """
-        The LightningModule is subclassing Module --> you can access its children parameters directly with self.parameters().
+        The LightningModule is subclassing Module --> you can access its children parameters directly with self.parameters()
         :return:
         """
         return torch.optim.Adam(self.parameters(), lr=1e-3)  # self.parameters() == model.parameters()
