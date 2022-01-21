@@ -56,10 +56,10 @@ class VOCDataset(torch.utils.data.Dataset):
         img_path = os.path.join(self.img_dir, self.annotations.iloc[index, 0])
         image = np.array(Image.open(img_path).convert("RGB"))  # make sure it is RGB
 
-        if self.transform:
-            augmentations = self.transform(image=image, bboxes=bboxes)
-            image = augmentations["image"]
-            bboxes = augmentations["bboxes"]
+        # if self.transform:
+        #     augmentations = self.transform(image=image, bboxes=bboxes)
+        #     image = augmentations["image"]
+        #     bboxes = augmentations["bboxes"]
 
         # S = 13, 26, 52
         # total_anchors // 3 = 3 (number of predictions we make)
@@ -67,7 +67,7 @@ class VOCDataset(torch.utils.data.Dataset):
         targets = [torch.zeros((self.num_anchors // 3, S, S, 6)) for S in self.S]  # (obj_prob, x, y, w, h, class)
 
         for box in bboxes:  # loop over expected bboxes
-            iou_anchors = iou(torch.tensor(box[2:4]), self.anchors)  # iou of all the anchor box candidates
+            iou_anchors = iou(torch.tensor(box[2:4]), self.anchors)  # iou between label boc and all the anchor box candidates
             anchor_indices = iou_anchors.argsort(descending=True, dim=0)
             x, y, width, height, class_label = box
             has_anchor = [False] * 3  # each scale should have one anchor
@@ -75,19 +75,19 @@ class VOCDataset(torch.utils.data.Dataset):
             for anchor_idx in anchor_indices:  # highest IoU to lowest
                 scale_idx = anchor_idx // self.num_anchors_per_scale  # idx // 3  --> let you know which scale you are looking at (small, medium. big)
                 anchor_on_scale = anchor_idx % self.num_anchors_per_scale  # which anchor in that certain scale?
-                S = self.S[scale_idx]
+                S = self.S[scale_idx]  # 13, 26, 52
                 i, j = int(S * y), int(S * x)  # which cell
                 anchor_taken = targets[scale_idx][anchor_on_scale, i, j, 0]  # object prob
-                if not anchor_taken and not has_anchor[scale_idx]:
+                if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
                     targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1
 
-                    x_cell, y_cell = S * x - j, S * y - i  # cell wise x, y coordinate [0~1]
-                    width_cell, height_cell = (
+                    x_cell, y_cell = S * x - j, S * y - i  # cell-wise x, y coordinate [0~1]
+                    w_cell, h_cell = (
                         width * S,
                         height * S,
                     )  # can be greater than 1 since it's relative to cell
                     box_coordinates = torch.tensor(
-                        [x_cell, y_cell, width_cell, height_cell]
+                        [x_cell, y_cell, w_cell, h_cell]
                     )
                     targets[scale_idx][anchor_on_scale, i, j, 1:5] = box_coordinates  # set x,y,w,h [0~1] [0~S]
                     targets[scale_idx][anchor_on_scale, i, j, 5] = int(class_label)
@@ -95,9 +95,8 @@ class VOCDataset(torch.utils.data.Dataset):
 
                 elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 1 and IoU higher than threshold
                     targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
-                    # Best case == you only keep 1 best bbox(1) and 2 shit bboxes(-1) (1 best + 2 bad)
 
-        return image, tuple(targets)
+        return image, tuple(targets)  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
 
 
 def test():
