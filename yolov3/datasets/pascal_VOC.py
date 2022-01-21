@@ -93,7 +93,9 @@ class VOCDataset(torch.utils.data.Dataset):
                     targets[scale_idx][anchor_on_scale, i, j, 5] = int(class_label)
                     has_anchor[scale_idx] = True  # highest obj marked in this scale move on to the next scale
 
-                elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 1 and IoU higher than threshold
+                # one scale should have one anchor box, but if the other anchor box in the same scale has high enouch IoU
+                # ignore it so that YOLO does not consider it as no object (no punish)
+                elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
                     targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
 
         return image, tuple(targets)  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
