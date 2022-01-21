@@ -56,10 +56,10 @@ class VOCDataset(torch.utils.data.Dataset):
         img_path = os.path.join(self.img_dir, self.annotations.iloc[index, 0])
         image = np.array(Image.open(img_path).convert("RGB"))  # make sure it is RGB
 
-        # if self.transform:
-        #     augmentations = self.transform(image=image, bboxes=bboxes)
-        #     image = augmentations["image"]
-        #     bboxes = augmentations["bboxes"]
+        if self.transform:
+            augmentations = self.transform(image=image, bboxes=bboxes)
+            image = augmentations["image"]
+            bboxes = augmentations["bboxes"]
 
         # S = 13, 26, 52
         # total_anchors // 3 = 3 (number of predictions we make)
