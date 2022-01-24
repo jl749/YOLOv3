@@ -5,7 +5,7 @@ import torch
 
 import yolov3.config as config
 from collections import Counter
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 
@@ -107,14 +107,14 @@ def cells_to_bboxes(predictions, anchors, split_size, is_preds=True):
     S = split_size
     BATCH_SIZE = predictions.shape[0]
 
-    num_anchors = len(anchors)
+    num_anchors = len(anchors)  # 3
     box_predictions = predictions[..., 1:5]  # x, y, w, h
     if is_preds:
         anchors = anchors.reshape(1, len(anchors), 1, 1, 2)
-        box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])
-        box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * anchors
+        box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])  # x, y
+        box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * anchors  # w, h
         scores = torch.sigmoid(predictions[..., 0:1])
-        best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)
+        best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)  # best conditional prob, P(class_i | obj)
     else:
         scores = predictions[..., 0:1]  # (BATCH_SIZE, 3, S, S, 1)
         best_class = predictions[..., 5:6]
@@ -332,7 +332,7 @@ def plot_couple_examples(model, loader, thresh, iou_thresh, anchors):
         nms_boxes = non_max_suppression(
             bboxes[i], iou_threshold=iou_thresh, threshold=thresh, box_format="midpoint",
         )
-        plot_image(x[i].permute(1,2,0).detach().cpu(), nms_boxes)
+        plot_image(x[i].permute(1, 2, 0).detach().cpu(), nms_boxes)
 
 
 def check_class_accuracy(model, loader, threshold):
@@ -372,15 +372,15 @@ def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
     from yolov3.datasets import VOCDataset
 
     IMAGE_SIZE = config.IMAGE_SIZE
-    train_dataset = VOCDataset(
+    train_dataset: Dataset = VOCDataset(
         train_csv_path,
         transform=config.train_transforms,
-        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],  # stride 32, 16, 8
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
     )
-    test_dataset = VOCDataset(
+    test_dataset: Dataset = VOCDataset(
         test_csv_path,
         transform=config.test_transforms,
         split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
@@ -405,7 +405,7 @@ def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
         drop_last=False,
     )
 
-    train_eval_dataset = VOCDataset(
+    train_eval_dataset: Dataset = VOCDataset(
         train_csv_path,
         transform=config.test_transforms,
         split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
@@ -426,7 +426,7 @@ def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
 
 
 def get_evaluation_bboxes(
-    loader,
+    loader: DataLoader,
     model,
     iou_threshold,
     anchors,
@@ -447,16 +447,19 @@ def get_evaluation_bboxes(
 
         batch_size = x.shape[0]
         bboxes = [[] for _ in range(batch_size)]
-        for i in range(3):
-            S = predictions[i].shape[2]
-            anchor = torch.tensor([*anchors[i]]).to(device) * S
-            boxes_scale_i = cells_to_bboxes(
+        for i in range(3):  # three predictions in three scales 13, 26, 51
+            S = predictions[i].shape[2]  # predictions[i]`s split_size
+
+            # anchor = anchor boxes info in scale_i
+            anchor = torch.tensor([*anchors[i]]).to(device) * S  # scale up anchor 0~1 --> 0~S
+            boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information ???SHAPE
                 predictions[i], anchor, split_size=S, is_preds=True
-            )
+            )  # (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
             for idx, (box) in enumerate(boxes_scale_i):
-                bboxes[idx] += box
+                bboxes[idx] += box  # append ScalePrediction results
 
         # we just want one bbox for each label, not one for each scale
+        # true_bboxes = expected lables
         true_bboxes = cells_to_bboxes(
             labels[2], anchor, split_size=S, is_preds=False
         )
@@ -467,7 +470,7 @@ def get_evaluation_bboxes(
                 iou_threshold=iou_threshold,
                 threshold=threshold,
                 box_format=box_format,
-            )
+            )  # filter predicted bboxes
 
             for nms_box in nms_boxes:
                 all_pred_boxes.append([train_idx] + nms_box)
@@ -478,7 +481,7 @@ def get_evaluation_bboxes(
 
             train_idx += 1
 
-    model.train()
+    model.train()  # revert to train mod
     return all_pred_boxes, all_true_boxes
 
 
