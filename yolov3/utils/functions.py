@@ -1,3 +1,4 @@
+from typing import List, Tuple
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -99,7 +100,7 @@ def cells_to_bboxes(predictions, anchors, split_size, is_preds=True):
     be relative to the entire image such that they for example later
     can be plotted
     :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, x, y, w, h, class]
-    :param anchors: the anchors used for the predictions (3, 2)
+    :param anchors: the anchors used for the predictions (3, 2) must have been scaled up 0~1 --> 0~S
     :param split_size: the number of cells the image is divided in (S x S)
     :param is_preds: whether the input is predictions or the true bounding boxes
     :return: the converted boxes of sizes (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
@@ -310,7 +311,7 @@ def plot_image(image, boxes):
     plt.show()
 
 
-def plot_couple_examples(model, loader, thresh, iou_thresh, anchors):
+def plot_couple_examples(model, loader, threshold, iou_threshold, anchors):
     model.eval()
     x, y = next(iter(loader))
     x = x.to("cuda")
@@ -330,26 +331,33 @@ def plot_couple_examples(model, loader, thresh, iou_thresh, anchors):
 
     for i in range(batch_size):
         nms_boxes = non_max_suppression(
-            bboxes[i], iou_threshold=iou_thresh, threshold=thresh, box_format="midpoint",
+            bboxes[i], iou_threshold=iou_threshold, threshold=threshold, box_format="midpoint",
         )
         plot_image(x[i].permute(1, 2, 0).detach().cpu(), nms_boxes)
 
 
-def check_class_accuracy(model, loader, threshold):
+def check_class_accuracy(model, loader: torch.utils.data.DataLoader, threshold):
+    """
+
+    :param model:
+    :param loader: test_loader
+    :param threshold:
+    :return:
+    """
     model.eval()
     tot_class_preds, correct_class = 0, 0
     tot_noobj, correct_noobj = 0, 0
     tot_obj, correct_obj = 0, 0
 
-    for idx, (x, y) in enumerate(tqdm(loader)):
+    for idx, (x, y) in enumerate(tqdm(loader)):  # 4952/BATCH_SIZE loops
         x = x.to(config.DEVICE)
         with torch.no_grad():
             out = model(x)
 
         for i in range(3):
             y[i] = y[i].to(config.DEVICE)
-            obj = y[i][..., 0] == 1 # in paper this is Iobj_i
-            noobj = y[i][..., 0] == 0  # in paper this is Iobj_i
+            obj = y[i][..., 0] == 1  # Identity obj_i
+            noobj = y[i][..., 0] == 0  # Identity noobj_i
 
             correct_class += torch.sum(
                 torch.argmax(out[i][..., 5:][obj], dim=-1) == y[i][..., 5][obj]
@@ -427,36 +435,50 @@ def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
 
 def get_evaluation_bboxes(
     loader: DataLoader,
-    model,
-    iou_threshold,
-    anchors,
-    threshold,
+    model: torch.nn.Module,
+    iou_threshold: float, threshold: float,
+    anchors: List[List[Tuple[float]]],
     box_format="midpoint",
     device="cuda",
 ):
+    """
+    filter according to the thresholds then
+    return final predicted(nms applied) bboxes and expected bboxes
+    outputs can be used to calculate mAP of the model
+    :param loader: DataLoader
+    :param model:
+    :param iou_threshold: threshold where predicted bboxes is correct
+    :param anchors: pre-defined(K-means) anchors
+    :param threshold: threshold to remove predicted bboxes (independent of IoU)
+    :param box_format:
+    :param device:
+    :return: final predicted(nms applied) bboxes, expected bboxes
+    """
     # make sure model is in eval before get bboxes
     model.eval()
     train_idx = 0
     all_pred_boxes = []
     all_true_boxes = []
+
+    # labels = [(BATCH_SIZE, 3, 13, 13, 6), (BATCH_SIZE, 3, 26, 26, 6), (BATCH_SIZE, 3, 52, 52, 6)]
     for batch_idx, (x, labels) in enumerate(tqdm(loader)):
-        x = x.to(device)
+        x = x.to(device)  # img
 
         with torch.no_grad():
             predictions = model(x)
 
         batch_size = x.shape[0]
         bboxes = [[] for _ in range(batch_size)]
-        for i in range(3):  # three predictions in three scales 13, 26, 51
+        for i in range(3):  # three predictions within each three scales 13, 26, 51
             S = predictions[i].shape[2]  # predictions[i]`s split_size
 
             # anchor = anchor boxes info in scale_i
             anchor = torch.tensor([*anchors[i]]).to(device) * S  # scale up anchor 0~1 --> 0~S
             boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information ???SHAPE
                 predictions[i], anchor, split_size=S, is_preds=True
-            )  # (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
-            for idx, (box) in enumerate(boxes_scale_i):
-                bboxes[idx] += box  # append ScalePrediction results
+            )  # (N, num_anchors * S * S, 1+5) with [class index, object score, bounding box coordinates]
+            for idx, (box) in enumerate(boxes_scale_i):  # idx 0 ~ N
+                bboxes[idx] += box  # append ScalePrediction_i results
 
         # we just want one bbox for each label, not one for each scale
         # true_bboxes = expected lables

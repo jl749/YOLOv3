@@ -1,11 +1,11 @@
 from torchvision.ops import box_iou
+# import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
 from yolov3.utils.functions import iou_Coor
 
 
-class YoloLoss(pl.LightningModule):
+class YoloLoss(nn.Module):
     def __init__(self):
         super().__init__()
         self.mse = nn.MSELoss()
@@ -19,7 +19,8 @@ class YoloLoss(pl.LightningModule):
         self.lambda_obj = 1
         self.lambda_box = 10
 
-    def forward(self, predictions, target, anchors):
+    # predictions
+    def forward(self, predictions, target, rescaled_anchors):
         # Check where obj and noobj (we ignore if target == -1)
         obj = target[..., 0] == 1  # in paper this is Iobj_i
         noobj = target[..., 0] == 0  # in paper this is Inoobj_i
@@ -36,19 +37,21 @@ class YoloLoss(pl.LightningModule):
         #   FOR OBJECT LOSS    #
         # ==================== #
 
-        anchors = anchors.reshape(1, 3, 1, 1, 2)  # anchor input = 3X2 (3 anchors each have w,h)
-        box_preds = torch.cat([self.sigmoid(predictions[..., 1:3]), torch.exp(predictions[..., 3:5]) * anchors], dim=-1)
+        rescaled_anchors = rescaled_anchors.reshape(1, 3, 1, 1, 2)  # anchor input = 3X2 (3 anchors each have w,h)
+        box_preds = torch.cat([self.sigmoid(predictions[..., 1:3]), torch.exp(predictions[..., 3:5]) * rescaled_anchors], dim=-1)  # (BATCH_SIZE, 3, S, S, 4)
         # ious = box_iou(box_preds[obj], target[..., 1:5][obj]).detach()
         ious = iou_Coor(box_preds[obj], target[..., 1:5][obj]).detach()  # detached obj grad will not be tracked
-        object_loss = self.mse(self.sigmoid(predictions[..., 0:1][obj]), ious * target[..., 0:1][obj])
+
+        # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj (likelihood actual obj inside predicted bbox)
+        object_loss = self.bce(self.sigmoid(predictions[..., 0:1][obj]), ious * target[..., 0:1][obj])
 
         # ======================== #
         #   FOR BOX COORDINATES    #
         # ======================== #
 
         predictions[..., 1:3] = self.sigmoid(predictions[..., 1:3])  # x,y coordinates
-        target[..., 3:5] = torch.log(
-            (1e-16 + target[..., 3:5] / anchors)
+        target[..., 3:5] = torch.log(  # modify target instead of predictions
+            (1e-16 + target[..., 3:5] / rescaled_anchors)
         )  # width, height coordinates
         box_loss = self.mse(predictions[..., 1:5][obj], target[..., 1:5][obj])
 

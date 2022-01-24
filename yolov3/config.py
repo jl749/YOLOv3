@@ -22,6 +22,9 @@ def seed_everything(seed=42):
 
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR.joinpath('data')
+IMG_DIR = DATA_DIR.joinpath("images")
+LABEL_DIR = DATA_DIR.joinpath("labels")
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 seed_everything()  # If you want deterministic behavior
 NUM_WORKERS = 4
@@ -30,17 +33,15 @@ IMAGE_SIZE = 416
 NUM_CLASSES = 20
 LEARNING_RATE = 1e-5
 WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 10
-CONF_THRESHOLD = 0.05
+NUM_EPOCHS = 100
+CONF_THRESHOLD = 0.6
 MAP_IOU_THRESH = 0.5
 NMS_IOU_THRESH = 0.45
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 PIN_MEMORY = True
-LOAD_MODEL = False
+LOAD_MODEL = True
 SAVE_MODEL = True
 CHECKPOINT_FILE = "checkpoint.pth.tar"
-IMG_DIR = DATA_DIR.joinpath("images")
-LABEL_DIR = DATA_DIR.joinpath("labels")
 
 ANCHORS = [
     [(0.28, 0.22), (0.38, 0.48), (0.9, 0.78)],
@@ -115,7 +116,7 @@ PASCAL_CLASSES = [
     "tvmonitor"
 ]
 
-COCO_LABELS = ['person',
+COCO_CLASSES = ['person',
                'bicycle',
                'car',
                'motorcycle',
@@ -126,73 +127,73 @@ COCO_LABELS = ['person',
                'boat',
                'traffic light',
                'fire hydrant',
-               'stop sign',
-               'parking meter',
-               'bench',
-               'bird',
-               'cat',
-               'dog',
-               'horse',
-               'sheep',
-               'cow',
-               'elephant',
-               'bear',
-               'zebra',
-               'giraffe',
-               'backpack',
-               'umbrella',
-               'handbag',
-               'tie',
-               'suitcase',
-               'frisbee',
-               'skis',
-               'snowboard',
-               'sports ball',
-               'kite',
-               'baseball bat',
-               'baseball glove',
-               'skateboard',
-               'surfboard',
-               'tennis racket',
-               'bottle',
-               'wine glass',
-               'cup',
-               'fork',
-               'knife',
-               'spoon',
-               'bowl',
-               'banana',
-               'apple',
-               'sandwich',
-               'orange',
-               'broccoli',
-               'carrot',
-               'hot dog',
-               'pizza',
-               'donut',
-               'cake',
-               'chair',
-               'couch',
-               'potted plant',
-               'bed',
-               'dining table',
-               'toilet',
-               'tv',
-               'laptop',
-               'mouse',
-               'remote',
-               'keyboard',
-               'cell phone',
-               'microwave',
-               'oven',
-               'toaster',
-               'sink',
-               'refrigerator',
-               'book',
-               'clock',
-               'vase',
-               'scissors',
-               'teddy bear',
-               'hair drier',
-               'toothbrush'
-               ]
+                'stop sign',
+                'parking meter',
+                'bench',
+                'bird',
+                'cat',
+                'dog',
+                'horse',
+                'sheep',
+                'cow',
+                'elephant',
+                'bear',
+                'zebra',
+                'giraffe',
+                'backpack',
+                'umbrella',
+                'handbag',
+                'tie',
+                'suitcase',
+                'frisbee',
+                'skis',
+                'snowboard',
+                'sports ball',
+                'kite',
+                'baseball bat',
+                'baseball glove',
+                'skateboard',
+                'surfboard',
+                'tennis racket',
+                'bottle',
+                'wine glass',
+                'cup',
+                'fork',
+                'knife',
+                'spoon',
+                'bowl',
+                'banana',
+                'apple',
+                'sandwich',
+                'orange',
+                'broccoli',
+                'carrot',
+                'hot dog',
+                'pizza',
+                'donut',
+                'cake',
+                'chair',
+                'couch',
+                'potted plant',
+                'bed',
+                'dining table',
+                'toilet',
+                'tv',
+                'laptop',
+                'mouse',
+                'remote',
+                'keyboard',
+                'cell phone',
+                'microwave',
+                'oven',
+                'toaster',
+                'sink',
+                'refrigerator',
+                'book',
+                'clock',
+                'vase',
+                'scissors',
+                'teddy bear',
+                'hair drier',
+                'toothbrush'
+                ]

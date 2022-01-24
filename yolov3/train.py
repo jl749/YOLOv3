@@ -20,37 +20,45 @@ from yolov3.utils import (
 )
 from yolov3.utils import YoloLoss
 import warnings
+
 warnings.filterwarnings("ignore")
 
 torch.backends.cudnn.benchmark = True
 
 
-def train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors):
+def train_fn(train_loader: torch.utils.data.DataLoader,
+             model: torch.nn.Module,
+             optimizer: torch.optim.Optimizer,
+             loss_fn: torch.nn.Module,
+             scaler,
+             scaled_anchors):
     loop = tqdm(train_loader, leave=True)
     losses = []
+
+    # y = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]
     for batch_idx, (x, y) in enumerate(loop):
         x = x.to(config.DEVICE)
         y0, y1, y2 = (
-            y[0].to(config.DEVICE),
-            y[1].to(config.DEVICE),
-            y[2].to(config.DEVICE),
+            y[0].to(config.DEVICE),  # (3, 13, 13, 6)
+            y[1].to(config.DEVICE),  # (3, 26, 26, 6)
+            y[2].to(config.DEVICE),  # (3, 52, 52, 6)
         )
 
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast():  # float16 forward pass, skinny Homer
             out = model(x)
             loss = (
-                loss_fn(out[0], y0, scaled_anchors[0])
-                + loss_fn(out[1], y1, scaled_anchors[1])
-                + loss_fn(out[2], y2, scaled_anchors[2])
+                    loss_fn(out[0], y0, scaled_anchors[0])  # YoloLoss(predicted, target, anchors)
+                    + loss_fn(out[1], y1, scaled_anchors[1])
+                    + loss_fn(out[2], y2, scaled_anchors[2])
             )
 
-        losses.append(loss.item())
+        losses.append(loss.item())  # returns the value of this tensor as a standard Python number
         optimizer.zero_grad()
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
+        scaler.scale(loss).backward()  # loss.backward()
+        scaler.step(optimizer)  # optimizer.step()
         scaler.update()
 
-        # update progress bar
+        # update tqdm progress bar
         mean_loss = sum(losses) / len(losses)
         loop.set_postfix(loss=mean_loss)
 
@@ -72,22 +80,22 @@ def main():
             config.CHECKPOINT_FILE, model, optimizer, config.LEARNING_RATE
         )
 
-    scaled_anchors = (
-        torch.tensor(config.ANCHORS)
-        * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
-    ).to(config.DEVICE)
+    scaled_anchors = (  # 0~1 --> 0~S
+            torch.tensor(config.ANCHORS)
+            * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
+    ).to(config.DEVICE)  # (3, 3, 2)
 
     for epoch in range(config.NUM_EPOCHS):
-        #plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
+        # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
         train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors)
 
-        #if config.SAVE_MODEL:
-        #    save_checkpoint(model, optimizer, filename=f"checkpoint.pth.tar")
+        if config.SAVE_MODEL:
+            save_checkpoint(model, optimizer, filename=f"checkpoint.pth.tar")
 
-        #print(f"Currently epoch {epoch}")
-        #print("On Train Eval loader:")
-        #print("On Train loader:")
-        #check_class_accuracy(model, train_loader, threshold=config.CONF_THRESHOLD)
+        # print(f"Currently epoch {epoch}")
+        # print("On Train Eval loader:")
+        # print("On Train loader:")
+        # check_class_accuracy(model, train_loader, threshold=config.CONF_THRESHOLD)
 
         if epoch > 0 and epoch % 3 == 0:
             check_class_accuracy(model, test_loader, threshold=config.CONF_THRESHOLD)
@@ -107,6 +115,11 @@ def main():
             )
             print(f"MAP: {mapval.item()}")
             model.train()
+
+    plot_couple_examples(model, train_eval_loader,
+                         iou_threshold=config.NMS_IOU_THRESH,
+                         threshold=config.CONF_THRESHOLD,
+                         anchors=config.ANCHORS)
 
 
 if __name__ == "__main__":

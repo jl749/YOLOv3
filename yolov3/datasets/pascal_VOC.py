@@ -67,16 +67,17 @@ class VOCDataset(torch.utils.data.Dataset):
         targets = [torch.zeros((self.num_anchors // 3, S, S, 6)) for S in self.S]  # (obj_prob, x, y, w, h, class)
 
         for box in bboxes:  # loop over expected bboxes
-            iou_anchors = iou(torch.tensor(box[2:4]), self.anchors)  # iou between label boc and all the anchor box candidates
-            anchor_indices = iou_anchors.argsort(descending=True, dim=0)
+            iou_anchors = iou(torch.tensor(box[2:4]), self.anchors)  # iou between label box and all the anchor box candidates
+            anchor_indices = iou_anchors.argsort(descending=True, dim=0)  # which scale do you think it could have been detected? sort its likelihood indexes
             x, y, width, height, class_label = box
             has_anchor = [False] * 3  # each scale should have one anchor??? why??? nms anyway???
 
             for anchor_idx in anchor_indices:  # highest IoU to lowest
-                scale_idx = anchor_idx // self.num_anchors_per_scale  # idx // 3  --> let you know which scale you are looking at (small, medium. big)
+                scale_idx = anchor_idx // self.num_anchors_per_scale  # idx // 3  --> which scale you are looking at (small, medium, big)
                 anchor_on_scale = anchor_idx % self.num_anchors_per_scale  # which anchor in that certain scale?
                 S = self.S[scale_idx]  # 13, 26, 52
                 i, j = int(S * y), int(S * x)  # which cell
+
                 anchor_taken = targets[scale_idx][anchor_on_scale, i, j, 0]  # object prob
                 if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
                     targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1

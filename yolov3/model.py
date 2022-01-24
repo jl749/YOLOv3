@@ -117,7 +117,7 @@ class YOLOv3(LightningModule):
                 route_connections.append(x)
 
             elif isinstance(layer, nn.Upsample):
-                x = torch.cat([x, route_connections[-1]], dim=1)
+                x = torch.cat([x, route_connections[-1]], dim=1)  # feature pyramid network
                 route_connections.pop()
 
         return outputs
