@@ -89,7 +89,7 @@ def iou_wh(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
         boxes1[..., 1], boxes2[..., 1]
     )
     union = (
-        boxes1[..., 0] * boxes1[..., 1] + boxes2[..., 0] * boxes2[..., 1] - intersection
+            boxes1[..., 0] * boxes1[..., 1] + boxes2[..., 0] * boxes2[..., 1] - intersection
     )
     return intersection / union
 
@@ -122,9 +122,9 @@ def cells_to_bboxes(predictions, anchors, split_size, is_preds=True):
 
     cell_indices = (
         torch.arange(S)
-        .repeat(predictions.shape[0], 3, S, 1)
-        .unsqueeze(-1)
-        .to(predictions.device)
+            .repeat(predictions.shape[0], 3, S, 1)
+            .unsqueeze(-1)
+            .to(predictions.device)
     )  # (1, 3, S, S, 1)
 
     # 0 ~ 1 scale
@@ -172,20 +172,18 @@ def non_max_suppression(bboxes, iou_threshold: float, threshold: float, box_form
 
 
 ##################################################################################################
-def mean_average_precision(
-        pred_boxes, true_boxes, iou_threshold=0.5, box_format="midpoint", num_classes=20
-):
+def mean_average_precision(pred_boxes: List[List[float]],  # get_evaluation_bboxes output
+                           true_boxes: List[List[float]],  # get_evaluation_bboxes output
+                           iou_threshold=0.5, box_format="midpoint", num_classes=20
+                           ) -> float:
     """
-    Calculates mean average precision
-    Parameters:
-        pred_boxes (list): list of lists containing all bboxes with each bboxes
-        specified as [train_idx, class_prediction, prob_score, x1, y1, x2, y2]
-        true_boxes (list): Similar as pred_boxes except all the correct ones
-        iou_threshold (float): threshold where predicted bboxes is correct
-        box_format (str): "midpoint" or "corners" used to specify bboxes
-        num_classes (int): number of classes
-    Returns:
-        float: mAP value across all classes given a specific IoU threshold
+    calculate mAP
+    :param pred_boxes: predicted bboxes [[train_idx, class_pred, obj_prob, x, y, w, h], ...]
+    :param true_boxes: expected bboxes
+    :param iou_threshold: threshold where predicted bboxes is correct
+    :param box_format: "midpoint" or "corners" used to specify bboxes
+    :param num_classes: number of classes
+    :return: mAP value across all classes given a specific IoU threshold
     """
 
     # list storing all AP for respective classes
@@ -311,7 +309,7 @@ def plot_image(image, boxes):
     plt.show()
 
 
-def plot_couple_examples(model, loader, threshold, iou_threshold, anchors):
+def plot_couple_examples(model, loader, threshold, iou_threshold, anchors, device="cuda"):
     model.eval()
     x, y = next(iter(loader))
     x = x.to("cuda")
@@ -319,10 +317,11 @@ def plot_couple_examples(model, loader, threshold, iou_threshold, anchors):
         out = model(x)
         bboxes = [[] for _ in range(x.shape[0])]
         for i in range(3):
-            batch_size, A, S, _, _ = out[i].shape
-            anchor = anchors[i]
+            batch_size, _, S, _, _ = out[i].shape  # BATCH_SIZE, 3, 52, 25
+            # anchor = anchors[i]
+            anchor = torch.tensor([*anchors[i]]).to(device) * S  # scale up anchor 0~1 --> 0~S
             boxes_scale_i = cells_to_bboxes(
-                out[i], anchor, S=S, is_preds=True
+                out[i], anchor, split_size=S, is_preds=True
             )
             for idx, (box) in enumerate(boxes_scale_i):
                 bboxes[idx] += box
@@ -338,11 +337,9 @@ def plot_couple_examples(model, loader, threshold, iou_threshold, anchors):
 
 def check_class_accuracy(model, loader: torch.utils.data.DataLoader, threshold):
     """
-
-    :param model:
+    evaluate model
     :param loader: test_loader
-    :param threshold:
-    :return:
+    :param threshold: P(obj) threshold
     """
     model.eval()
     tot_class_preds, correct_class = 0, 0
@@ -370,9 +367,9 @@ def check_class_accuracy(model, loader: torch.utils.data.DataLoader, threshold):
             correct_noobj += torch.sum(obj_preds[noobj] == y[i][..., 0][noobj])
             tot_noobj += torch.sum(noobj)
 
-    print(f"Class accuracy is: {(correct_class/(tot_class_preds+1e-16))*100:2f}%")
-    print(f"No obj accuracy is: {(correct_noobj/(tot_noobj+1e-16))*100:2f}%")
-    print(f"Obj accuracy is: {(correct_obj/(tot_obj+1e-16))*100:2f}%")
+    print(f"Class accuracy is: {(correct_class / (tot_class_preds + 1e-16)) * 100:2f}%")
+    print(f"No obj accuracy is: {(correct_noobj / (tot_noobj + 1e-16)) * 100:2f}%")
+    print(f"Obj accuracy is: {(correct_obj / (tot_obj + 1e-16)) * 100:2f}%")
     model.train()
 
 
@@ -434,12 +431,12 @@ def get_loaders(train_csv_path, test_csv_path) -> DataLoader:
 
 
 def get_evaluation_bboxes(
-    loader: DataLoader,
-    model: torch.nn.Module,
-    iou_threshold: float, threshold: float,
-    anchors: List[List[Tuple[float]]],
-    box_format="midpoint",
-    device="cuda",
+        loader: DataLoader,
+        model: torch.nn.Module,
+        iou_threshold: float, threshold: float,
+        anchors: List[List[Tuple[float]]],
+        box_format="midpoint",
+        device="cuda",
 ):
     """
     filter according to the thresholds then
@@ -501,7 +498,7 @@ def get_evaluation_bboxes(
                 if box[1] > threshold:
                     all_true_boxes.append([train_idx] + box)
 
-            train_idx += 1
+            train_idx += 1  # img index
 
     model.train()  # revert to train mod
     return all_pred_boxes, all_true_boxes
@@ -661,4 +658,3 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr):
 #         all_bboxes.append(bboxes)
 #
 #     return all_bboxes  # (BATCH_SIZE, S*S, 6)
-
