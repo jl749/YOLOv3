@@ -41,6 +41,7 @@ S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 PIN_MEMORY = True  # train on GPU, dataloader --> GPU
 LOAD_MODEL = True
 SAVE_MODEL = True
+# CHECKPOINT_FILE = "yolov3_pascal_78.1map.pth.tar"
 CHECKPOINT_FILE = "checkpoint.pth.tar"
 
 ANCHORS = [
