@@ -1,5 +1,5 @@
 # myYOLO
-[yolov3](https://arxiv.org/pdf/1804.02767.pdf)  implementation in pytorch ([code template](https://github.com/aladdinpersson/Machine-Learning-Collection/tree/master/ML/Pytorch/object_detection/YOLOv3))
+[yolov3](https://arxiv.org/pdf/1804.02767.pdf)  implementation in pytorch ([original code](https://github.com/aladdinpersson/Machine-Learning-Collection/tree/master/ML/Pytorch/object_detection/YOLOv3))
 
 ## example result:
 ![](https://github.com/jl749/YOLOv3/blob/master/output_example.png)
