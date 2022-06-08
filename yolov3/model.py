@@ -42,9 +42,10 @@ config = [
 
 
 class CNNBlock(nn.Module):
-    def __init__(self, c1, c2, bn_act=True, **kwargs):  # batch_norm and activation
+    """ conv -> bn -> leakyReLU  | conv """
+    def __init__(self, c1, c2, bn_act=True, stride=1, **kwargs):  # batch_norm and activation
         super().__init__()
-        self.conv = nn.Conv2d(c1, c2, bias=not bn_act, **kwargs)
+        self.conv = nn.Conv2d(c1, c2, bias=not bn_act, stride=stride, **kwargs)
         self.bn = nn.BatchNorm2d(c2)
         self.act = nn.LeakyReLU(0.1)
         self.use_bn_act = bn_act
@@ -56,13 +57,14 @@ class CNNBlock(nn.Module):
 
 
 class ResidualBlock(nn.Module):
+    """ maintain spatial dim and channel, only feature extraction here """
     def __init__(self, c1, use_residual=True, num_repeats=1):
         super().__init__()
         self.layers = nn.ModuleList()
-        for i in range(num_repeats):
+        for _ in range(num_repeats):
             self.layers += [nn.Sequential(
-                CNNBlock(c1, c1 // 2, kernel_size=1),
-                CNNBlock(c1 // 2, c1, kernel_size=3, padding=1),
+                CNNBlock(c1, c1 // 2, kernel_size=1),  # 1x1 conv
+                CNNBlock(c1 // 2, c1, kernel_size=3, padding=1),  # 3x3 conv (same padding)
             )]
         self.use_residual = use_residual
         self.num_repeats = num_repeats
@@ -77,17 +79,17 @@ class ScalePrediction(nn.Module):
     def __init__(self, c1, num_classes):
         super().__init__()
         self.pred = nn.Sequential(
-            CNNBlock(c1, 2*c1, kernel_size=3, padding=1),
+            CNNBlock(c1, 2*c1, kernel_size=3, padding=1),  # same padding, double the channel
             # 3 output anchors, each (obj_prob, x, y, w, h)
-            CNNBlock(2*c1, (num_classes+5)*3, bn_act=False, kernel_size=1),  # (output channel = (C+5)*3)
+            CNNBlock(2*c1, (num_classes+5)*3, bn_act=False, kernel_size=1),  # output channel = (C+5)*3, 3 because within one cell max num of objs that can be detected is 3
         )
         self.C = num_classes
 
     def forward(self, x):
         return (
             self.pred(x)
-                .reshape(x.shape[0], 3, self.C + 5, x.shape[2], x.shape[3])
-                .permute(0, 1, 3, 4, 2)  # (BATCH_SIZE, anchors=3, S, S, 5+C)
+                .reshape(x.shape[0], 3, self.C + 5, x.shape[2], x.shape[3])  # N, 3, num_classes + 5, S, S
+                .permute(0, 1, 3, 4, 2)  # (BATCH_SIZE, anchors=3, S, S, 5+C), permute classes to the end
         )
 
 
@@ -113,7 +115,7 @@ class YOLOv3(LightningModule):
             # if i == 10:  # end of Darknet-53
             #     print('\n')
 
-            if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:
+            if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:  # concat (FPN)
                 route_connections.append(x)
 
             elif isinstance(layer, nn.Upsample):
@@ -137,22 +139,22 @@ class YOLOv3(LightningModule):
 
         for layer in config:
             if isinstance(layer, tuple):  # Conv Layer
-                c2, k, s = layer
+                c2, kernel_size, stride = layer
                 layers.append(
-                    CNNBlock(c1, c2, kernel_size=k, stride=s, padding=1 if k == 3 else 0)  # Conv + BN + LeakyReLU
-                )
+                    CNNBlock(c1, c2, kernel_size=kernel_size, stride=stride, padding=1 if kernel_size == 3 else 0)
+                )  # SAME padding when kernel == 3, spatial dim halved with strides (1 or 2)
                 c1 = c2  # Conv output channels --> next input
             elif isinstance(layer, list):  # ResidualBlock
-                num_repeats = layer[1]
+                num_repeats: int = layer[1]
                 layers.append(ResidualBlock(c1, num_repeats=num_repeats))
             elif isinstance(layer, str):  # ConvolutionalSet + ScalePrediction
                 if layer == "ScalePrediction":
                     layers += [
                         # === ConvolutionalSet === #
-                        ResidualBlock(c1, use_residual=False, num_repeats=1),  # bottleneck
+                        ResidualBlock(c1, use_residual=False, num_repeats=1),  # one bottleneck (1x1) --> (3x3) -->
                         CNNBlock(c1, c1 // 2, kernel_size=1),  # 1x1 kernel that reduces channels by half
                         # ======================== #
-                        ScalePrediction(c1 // 2, num_classes=self.C)
+                        ScalePrediction(c1=c1 // 2, num_classes=self.C)
                     ]
                     c1 = c1 // 2  # ConvolutionalSet output --> next input
                 elif layer == "UpSample":
