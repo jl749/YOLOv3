@@ -1,7 +1,6 @@
 """
 Implementation of yolov3 architecture
 """
-from pytorch_lightning.core.lightning import LightningModule
 import torch
 import torch.nn as nn
 
@@ -93,7 +92,7 @@ class ScalePrediction(nn.Module):
         )
 
 
-class YOLOv3(LightningModule):
+class YOLOv3(nn.Module):
     def __init__(self, c1=3, num_classes=20):  # PASCAL_VOC=20, COCO=80
         super().__init__()
         self.c1 = c1
