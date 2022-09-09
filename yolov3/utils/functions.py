@@ -10,8 +10,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 
-def iou_Coor(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor,
-             box_format="midpoint") -> torch.Tensor:
+def iou(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor,
+        box_format="midpoint") -> torch.Tensor:
     """
     Calculates intersection over union using "coordinates" of the boxes
     :param boxes_preds: Predictions of Bounding Boxes (BATCH_SIZE, 4)
@@ -23,7 +23,7 @@ def iou_Coor(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor,
 
     # boxes_preds[..., 0:1] --> (1, 7, 7, 1)
     # boxes_preds[..., 0] --> (1, 7, 7)
-    x_hat = boxes_preds[..., 0:1]  # (1, 7, 7, 1)
+    x_hat, y_hat, w_hat, h_hat = boxes_preds[..., 0:1]  # (1, 7, 7, 1)
     y_hat = boxes_preds[..., 1:2]
     w_hat = boxes_preds[..., 2:3]
     h_hat = boxes_preds[..., 3:4]
@@ -78,78 +78,67 @@ def iou_Coor(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor,
     return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 
-def iou_wh(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+def label_anchor_likelihood(input_wh: torch.Tensor, anchor_wh: torch.Tensor) -> torch.Tensor:
     """
     Calculates intersection over union using "width" and "height" of the boxes
-    :param boxes1: width and height of the first bounding boxes
-    :param boxes2: width and height of the second bounding boxes
-    :return: IoU of the corresponding boxes
+    :param input_wh: width and height of the label
+    :param anchor_wh: widths and heights of the predefined anchors
+    :return: IoU between label wh ratio and anchor wh ratio (num_anchors,)
     """
-    intersection = torch.min(boxes1[..., 0], boxes2[..., 0]) * torch.min(
-        boxes1[..., 1], boxes2[..., 1]
-    )
-    union = (
-            boxes1[..., 0] * boxes1[..., 1] + boxes2[..., 0] * boxes2[..., 1] - intersection
-    )
+    intersection = torch.min(input_wh[..., 0], anchor_wh[..., 0]) * torch.min(input_wh[..., 1], anchor_wh[..., 1])
+    union = input_wh[..., 0] * input_wh[..., 1] + anchor_wh[..., 0] * anchor_wh[..., 1] - intersection
     return intersection / union
 
 
-def cells_to_bboxes(predictions, anchors, split_size, is_preds=True):
+def cells_to_bboxes(predictions, anchors, stride, is_preds=True):
     """
-    Scales the predictions coming from the model to
-    be relative to the entire image such that they for example later
-    can be plotted
+    Post-process logit output of the model (0 ~ S --> 0 ~ 1 scale) such that they can be plotted
     :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, x, y, w, h, class]
     :param anchors: the anchors used for the predictions (3, 2) must have been scaled up 0~1 --> 0~S
-    :param split_size: the number of cells the image is divided in (S x S)
-    :param is_preds: whether the input is predictions or the true bounding boxes
+    :param stride: the number of cells the image is divided in (S x S)
+    :param is_preds: whether the input is predictions or the true bounding boxes (label)
     :return: the converted boxes of sizes (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
     """
-    S = split_size
-    BATCH_SIZE = predictions.shape[0]
+    S = stride
+    N = predictions.shape[0]
 
     num_anchors = len(anchors)  # 3
-    box_predictions = predictions[..., 1:5]  # x, y, w, h
-    if is_preds:
+    box_predictions = predictions[..., 1:5]  # (obj_prob, x, y, w, h, class) --> (x, y, w, h)
+    if is_preds:  # https://github.com/jl749/YOLOv3/issues/1#issuecomment-1016024032
         anchors = anchors.reshape(1, len(anchors), 1, 1, 2)
         box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])  # x, y
         box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * anchors  # w, h
         scores = torch.sigmoid(predictions[..., 0:1])
         best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)  # best conditional prob, P(class_i | obj)
-    else:
+    else:  # if `predictions` is label data
         scores = predictions[..., 0:1]  # (BATCH_SIZE, 3, S, S, 1)
         best_class = predictions[..., 5:6]
 
-    cell_indices = (
-        torch.arange(S)
-            .repeat(predictions.shape[0], 3, S, 1)
-            .unsqueeze(-1)
-            .to(predictions.device)
-    )  # (1, 3, S, S, 1)
+    yv, xv = torch.meshgrid([torch.arange(S)] * 2, indexing="ij")  # TODO: consider pytorch version?
 
-    # 0 ~ 1 scale
-    x = 1 / S * (box_predictions[..., 0:1] + cell_indices)
-    y = 1 / S * (box_predictions[..., 1:2] + cell_indices.permute(0, 1, 3, 2, 4))
+    # scale down to 0 ~ 1
+    x = 1 / S * (xv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 0:1])
+    y = 1 / S * (yv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 1:2])
     w_h = 1 / S * box_predictions[..., 2:4]
-    converted_bboxes = torch.cat((best_class, scores, x, y, w_h), dim=-1).reshape(BATCH_SIZE, num_anchors * S * S, 6)
+    converted_bboxes = torch.cat([best_class, scores, x, y, w_h], dim=-1).reshape(N, num_anchors * S * S, 6)
     return converted_bboxes.tolist()
 
 
 # torchvision.ops.nms()
-def non_max_suppression(bboxes, iou_threshold: float, threshold: float, box_format="corners"):
+def non_max_suppression(bboxes, iou_threshold: float, obj_threshold: float, box_format="corners"):
     """
     Non Max Suppression on given bboxes (S*S, 6)
     Input: A list of Proposal boxes X, corresponding confidence scores A and overlap threshold B.
     Output: A list of filtered proposals Y.
     :param bboxes: (S*S, 6) containing all bboxes with each bboxes, [class_pred, prob_score, x, y, w, h]
     :param iou_threshold: threshold where predicted bboxes is correct
-    :param threshold: threshold to remove predicted bboxes (independent of IoU)
+    :param obj_threshold: threshold to remove predicted bboxes (independent of IoU)
     :param box_format: "midpoint" or "corners" used to specify bboxes
     :return: bboxes after performing NMS given a specific IoU threshold
     """
-    assert type(bboxes) == list  # np nor tensor
+    assert isinstance(bboxes, list)  # np nor tensor
 
-    bboxes = [box for box in bboxes if box[1] > threshold]  # box[1] = obj confidence
+    bboxes = [box for box in bboxes if box[1] > obj_threshold]  # box[1] = obj confidence
     bboxes = sorted(bboxes, key=lambda x: x[1], reverse=True)  # sort descending
     bboxes_after_nms = []
 
@@ -159,7 +148,7 @@ def non_max_suppression(bboxes, iou_threshold: float, threshold: float, box_form
         bboxes = [  # create new bboxes each loop, filtering low acc bbox
             box
             for box in bboxes
-            if box[0] != chosen_box[0] or iou_Coor(
+            if box[0] != chosen_box[0] or iou(  # no need to compare iou when classes are different
                 torch.tensor(chosen_box[2:]),
                 torch.tensor(box[2:]),
                 box_format=box_format,
@@ -241,7 +230,7 @@ def mean_average_precision(pred_boxes: List[List[float]],  # get_evaluation_bbox
             best_iou = 0
 
             for idx, gt in enumerate(ground_truth_img):
-                iou = iou_Coor(
+                iou = iou(
                     torch.tensor(detection[3:]),
                     torch.tensor(gt[3:]),
                     box_format=box_format,
@@ -321,7 +310,7 @@ def plot_couple_examples(model, loader, threshold, iou_threshold, anchors, devic
             # anchor = anchors[i]
             anchor = torch.tensor([*anchors[i]]).to(device) * S  # scale up anchor 0~1 --> 0~S
             boxes_scale_i = cells_to_bboxes(
-                out[i], anchor, split_size=S, is_preds=True
+                out[i], anchor, stride=S, is_preds=True
             )
             for idx, (box) in enumerate(boxes_scale_i):
                 bboxes[idx] += box
@@ -330,7 +319,7 @@ def plot_couple_examples(model, loader, threshold, iou_threshold, anchors, devic
 
     for i in range(batch_size):
         nms_boxes = non_max_suppression(
-            bboxes[i], iou_threshold=iou_threshold, threshold=threshold, box_format="midpoint",
+            bboxes[i], iou_threshold=iou_threshold, obj_threshold=threshold, box_format="midpoint",
         )
         plot_image(x[i].permute(1, 2, 0).detach().cpu(), nms_boxes)
 
@@ -472,7 +461,7 @@ def get_evaluation_bboxes(
             # anchor = anchor boxes info in scale_i
             anchor = torch.tensor([*anchors[i]]).to(device) * S  # scale up anchor 0~1 --> 0~S
             boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information ???SHAPE
-                predictions[i], anchor, split_size=S, is_preds=True
+                predictions[i], anchor, stride=S, is_preds=True
             )  # (N, num_anchors * S * S, 1+5) with [class index, object score, bounding box coordinates]
             for idx, (box) in enumerate(boxes_scale_i):  # idx 0 ~ N
                 bboxes[idx] += box  # append ScalePrediction_i results
@@ -480,14 +469,14 @@ def get_evaluation_bboxes(
         # we just want one bbox for each label, not one for each scale
         # true_bboxes = expected lables
         true_bboxes = cells_to_bboxes(
-            labels[2], anchor, split_size=S, is_preds=False
+            labels[2], anchor, stride=S, is_preds=False
         )
 
         for idx in range(batch_size):
             nms_boxes = non_max_suppression(
                 bboxes[idx],
                 iou_threshold=iou_threshold,
-                threshold=threshold,
+                obj_threshold=threshold,
                 box_format=box_format,
             )  # filter predicted bboxes
 

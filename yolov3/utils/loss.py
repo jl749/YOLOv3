@@ -2,7 +2,7 @@ from torchvision.ops import box_iou
 # import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from yolov3.utils.functions import iou_Coor
+from yolov3.utils.functions import iou
 
 
 class YoloLoss(nn.Module):
@@ -40,7 +40,7 @@ class YoloLoss(nn.Module):
         rescaled_anchors = rescaled_anchors.reshape(1, 3, 1, 1, 2)  # anchor input = 3X2 (3 anchors each have w,h)
         box_preds = torch.cat([self.sigmoid(predictions[..., 1:3]), torch.exp(predictions[..., 3:5]) * rescaled_anchors], dim=-1)  # (BATCH_SIZE, 3, S, S, 4)
         # ious = box_iou(box_preds[obj], target[..., 1:5][obj]).detach()
-        ious = iou_Coor(box_preds[obj], target[..., 1:5][obj]).detach()  # detached obj grad will not be tracked
+        ious = iou(box_preds[obj], target[..., 1:5][obj]).detach()  # detached obj grad will not be tracked
 
         # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj (likelihood actual obj inside predicted bbox)
         object_loss = self.bce(self.sigmoid(predictions[..., 0:1][obj]), ious * target[..., 0:1][obj])
