@@ -1,12 +1,13 @@
+import torch
+import numpy as np
+
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import cv2
+
 import os
 import random
 from pathlib import Path
-import albumentations as A
-import cv2
-import numpy as np
-import torch
-
-from albumentations.pytorch import ToTensorV2
 
 
 def seed_everything(seed=42):
@@ -25,24 +26,13 @@ DATA_DIR = BASE_DIR.joinpath('data')
 IMG_DIR = DATA_DIR.joinpath("images")
 LABEL_DIR = DATA_DIR.joinpath("labels")
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # seed_everything()  # If you want deterministic behavior
-NUM_WORKERS = 4
-BATCH_SIZE = 32
+NUM_WORKERS = 0
+BATCH_SIZE = 4
 IMAGE_SIZE = 416
-NUM_CLASSES = 20
-LEARNING_RATE = 1e-5
-WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 300
-CONF_THRESHOLD = 0.6
-MAP_IOU_THRESH = 0.5
-NMS_IOU_THRESH = 0.45
+
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
 PIN_MEMORY = True  # train on GPU, dataloader --> GPU
-LOAD_MODEL = True
-SAVE_MODEL = True
-# CHECKPOINT_FILE = "yolov3_pascal_78.1map.pth.tar"
-CHECKPOINT_FILE = "checkpoint.pth.tar"
 
 ANCHORS = [
     [(0.28, 0.22), (0.38, 0.48), (0.9, 0.78)],

@@ -121,7 +121,7 @@ class YOLOv3(nn.Module):
                 x = torch.cat([x, route_connections[-1]], dim=1)  # feature pyramid network
                 route_connections.pop()
 
-        return outputs
+        return outputs  # xywh
 
     def training_step(self, batch, batch_idx):
         """

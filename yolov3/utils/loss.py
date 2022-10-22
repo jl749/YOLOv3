@@ -2,7 +2,7 @@ from torchvision.ops import box_iou
 # import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from yolov3.utils.functions import iou
+from yolov3.utils import iou
 
 
 class YoloLoss(nn.Module):

@@ -1,55 +1,76 @@
 """
-Main file for training Yolo model on Pascal VOC and COCO dataset
+Main file for training Yolo model on Pascal VOC and COCO data
 """
-
-import config
 import torch
 import torch.optim as optim
 
-from model import YOLOv3
+import argparse
+from pathlib import Path
 from tqdm import tqdm
+from model import YOLOv3
 from yolov3.utils import (
     mean_average_precision,
-    cells_to_bboxes,
     get_evaluation_bboxes,
     save_checkpoint,
     load_checkpoint,
     check_class_accuracy,
     get_loaders,
-    plot_couple_examples
+    plot_couple_examples,
+    YoloLoss
 )
-from yolov3.utils import YoloLoss
-import warnings
+import config
+# import warnings
+# warnings.filterwarnings("ignore")
 
-warnings.filterwarnings("ignore")
+parser = argparse.ArgumentParser(description='YOLOv3 training')
+parser.add_argument('--data_dir', type=str, default='data', help='dataset directory')
+parser.add_argument('--epochs', type=int, default=300, help='num epochs for training')
+parser.add_argument('--chkpt',  default='yolov3_pascal_78.1map.pth.tar', type=str, help='fine-tuning chkpt')
+parser.add_argument('--num_classes', type=int, default=20, help='number of classes, VOC=20, COCO=80')
 
+# optimizer
+parser.add_argument('--lr', '--learning_rate', default=1e-3, type=float, help='initial learning rate')
+parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
+parser.add_argument('--weight_decay', type=float, default=1e-4, help='optimizer weight decay')
+parser.add_argument('--step_size', type=int, default=100, help='gamma update step size for LRScheduler')
+parser.add_argument('--gamma', type=float, default=0.1, help='gamma update for LRScheduler')
+
+# prediction hyperparameters
+parser.add_argument('--nms_threshold', type=float, default=0.45, help='nms threshold for prediction')
+parser.add_argument('--conf_threshold', type=float, default=0.6, help='confidence threshold for prediction')
+parser.add_argument('--iou_threshold', type=float, default=0.5, help='iou threshold for evaluation (TP, FP boundary)')
+
+parser.add_argument('--cuda', action='store_true', default=True, help='use cuda')
+
+args = parser.parse_args()
+device = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
 torch.backends.cudnn.benchmark = True
-
+DATA_DIR = Path(args.data_dir)
 
 def train_fn(train_loader: torch.utils.data.DataLoader,
              model: torch.nn.Module,
              optimizer: torch.optim.Optimizer,
-             loss_fn: torch.nn.Module,
+             criterion: torch.nn.Module,
              scaler,
              scaled_anchors):
-    loop = tqdm(train_loader, leave=True)
     losses = []
+    pbar = tqdm(train_loader, leave=True)
 
     # y = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]
-    for batch_idx, (x, y) in enumerate(loop):
-        x = x.to(config.DEVICE)
+    for batch_idx, (img_batch, labels) in enumerate(pbar):
+        img_batch = img_batch.to(device)
         y0, y1, y2 = (
-            y[0].to(config.DEVICE),  # (3, 13, 13, 6)
-            y[1].to(config.DEVICE),  # (3, 26, 26, 6)
-            y[2].to(config.DEVICE),  # (3, 52, 52, 6)
+            labels[0].to(device),  # (3, 13, 13, 6)
+            labels[1].to(device),  # (3, 26, 26, 6)
+            labels[2].to(device),  # (3, 52, 52, 6)
         )
 
-        with torch.cuda.amp.autocast():  # float16 forward pass, skinny Homer
-            out = model(x)
+        with torch.cuda.amp.autocast():  # float16 forward pass
+            out = model(img_batch)
             loss = (
-                    loss_fn(out[0], y0, scaled_anchors[0])  # YoloLoss(predicted, target, anchors)
-                    + loss_fn(out[1], y1, scaled_anchors[1])
-                    + loss_fn(out[2], y2, scaled_anchors[2])
+                    criterion(out[0], y0, scaled_anchors[0])  # YoloLoss(predicted, target, anchors)
+                    + criterion(out[1], y1, scaled_anchors[1])
+                    + criterion(out[2], y2, scaled_anchors[2])
             )
 
         losses.append(loss.item())  # returns the value of this tensor as a standard Python number
@@ -60,65 +81,78 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
 
         # update tqdm progress bar
         mean_loss = sum(losses) / len(losses)
-        loop.set_postfix(loss=mean_loss)
+        pbar.set_postfix(loss=mean_loss)
 
+
+def eval_func(test_loader: torch.utils.data.DataLoader,
+              model: torch.nn.Module,
+              scaled_anchors):
+    # check_class_accuracy(model, test_loader, threshold=args.conf_threshold)  # TODO: double check
+    pred_boxes, true_boxes = get_evaluation_bboxes(
+        test_loader,
+        model,
+        nms_threshold=args.nms_threshold,
+        anchors=scaled_anchors,
+        conf_threshold=args.conf_threshold,
+    )
+
+    mAPs_per_class, recalls_per_class, precisions_per_class = mean_average_precision(
+        pred_boxes,
+        true_boxes,
+        iou_threshold=args.iou_threshold,
+        num_classes=args.num_classes,
+    )
+    print(f"mAP: {sum(mAPs_per_class) / len(mAPs_per_class)}")
+    print(f"recall: {sum(recalls_per_class) / len(recalls_per_class)}")
+    print(f"precision: {sum(precisions_per_class) / len(precisions_per_class)}")
 
 def main():
-    model = YOLOv3(num_classes=config.NUM_CLASSES).to(config.DEVICE)
-    optimizer = optim.Adam(
-        model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY
+    model = YOLOv3(num_classes=args.num_classes).to(device)
+
+    # CNN based vision models often use SGD over Adam
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = optim.SGD(
+        model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay
     )
-    loss_fn = YoloLoss()
+    criterion = YoloLoss()
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+
     scaler = torch.cuda.amp.GradScaler()
 
     train_loader, test_loader, train_eval_loader = get_loaders(
-        train_csv_path=config.DATA_DIR.joinpath("train.csv"), test_csv_path=config.DATA_DIR.joinpath("test.csv")
+        train_csv_path=DATA_DIR.joinpath("train.csv"), test_csv_path=DATA_DIR.joinpath("test.csv")
     )
 
-    if config.LOAD_MODEL:
+    if args.chkpt:  # if provided
         load_checkpoint(
-            config.CHECKPOINT_FILE, model, optimizer, config.LEARNING_RATE
+            args.chkpt, model, optimizer, args.lr
         )
 
-    scaled_anchors = (  # 0~1 --> 0~S
+    scaled_anchors = (  # scale anchor boxes 0~1 --> 0~S
             torch.tensor(config.ANCHORS)
-            * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
-    ).to(config.DEVICE)  # (3, 3, 2)
+            * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)  # TODO: image_size from argparse
+    ).to(device)  # (3, 3, 2)
 
-    for epoch in range(config.NUM_EPOCHS):
+    for epoch in range(args.epochs):
+        model.train()
         # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
-        train_fn(train_loader, model, optimizer, loss_fn, scaler, scaled_anchors)
+        train_fn(train_loader, model, optimizer, criterion, scaler, scaled_anchors=scaled_anchors)
 
-        if config.SAVE_MODEL:
-            save_checkpoint(model, optimizer, filename=config.CHECKPOINT_FILE)  # "checkpoint.pth.tar"
+        save_checkpoint(model, optimizer, filename="checkpoint.pth.tar")
 
         # print(f"Currently epoch {epoch}")
         # print("On Train Eval loader:")
         # print("On Train loader:")
-        # check_class_accuracy(model, train_loader, threshold=config.CONF_THRESHOLD)
+        # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)
+        scheduler.step()
 
+        # EVALUATION TODO: separate function
         if epoch > 0 and epoch % 10 == 0:
-            check_class_accuracy(model, test_loader, threshold=config.CONF_THRESHOLD)
-            pred_boxes, true_boxes = get_evaluation_bboxes(
-                test_loader,
-                model,
-                iou_threshold=config.NMS_IOU_THRESH,
-                anchors=config.ANCHORS,
-                threshold=config.CONF_THRESHOLD,
-            )
-            mapval = mean_average_precision(
-                pred_boxes,
-                true_boxes,
-                iou_threshold=config.MAP_IOU_THRESH,
-                box_format="midpoint",
-                num_classes=config.NUM_CLASSES,
-            )
-            print(f"MAP: {mapval.item()}")
-            model.train()
+            eval_func(test_loader, model, scaled_anchors=scaled_anchors)
 
     plot_couple_examples(model, train_eval_loader,
-                         iou_threshold=config.NMS_IOU_THRESH,
-                         threshold=config.CONF_THRESHOLD,
+                         nms_threshold=args.nms_threshold,
+                         threshold=args.conf_threshold,
                          anchors=config.ANCHORS)
 
 
