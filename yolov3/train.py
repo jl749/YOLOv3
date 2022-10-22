@@ -146,7 +146,7 @@ def main():
         # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)
         scheduler.step()
 
-        # EVALUATION TODO: separate function
+        # EVALUATION every 10 epochs
         if epoch > 0 and epoch % 10 == 0:
             eval_func(test_loader, model, scaled_anchors=scaled_anchors)
 
