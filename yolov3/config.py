@@ -28,7 +28,7 @@ LABEL_DIR = DATA_DIR.joinpath("labels")
 
 # seed_everything()  # If you want deterministic behavior
 NUM_WORKERS = 0
-BATCH_SIZE = 4
+BATCH_SIZE = 8
 IMAGE_SIZE = 416
 
 S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]

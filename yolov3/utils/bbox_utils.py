@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import torchvision
 
+import sys
 from typing import List, Tuple
 from tqdm import tqdm
 from copy import copy
@@ -62,8 +63,9 @@ def get_evaluation_bboxes(
     train_idx = 0  # distinguish image
     all_pred_boxes = []
     all_true_boxes = []
-
-    for img_batch, labels in tqdm(iter(loader)):
+    pbar = tqdm(iter(loader), file=sys.stdout)
+    for img_batch, labels in pbar:
+        pbar.set_description("EVALUATING ...")
         N, _, H, W = img_batch.shape
         img_batch = img_batch.to(_device)
         labels = [l.to(_device) for l in labels]
@@ -147,6 +149,7 @@ def cells_to_bboxes(predictions, anchors, is_preds=True):
     :param is_preds: whether the input is predictions or the true bounding boxes (label)
     :return: the converted boxes of sizes (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
     """
+    _device = predictions.device
     N, _, S, _, _ = predictions.shape
 
     num_anchors = len(anchors)  # 3
@@ -166,6 +169,8 @@ def cells_to_bboxes(predictions, anchors, is_preds=True):
         best_class = predictions[..., 5:6]
 
     yv, xv = torch.meshgrid([torch.arange(S)] * 2, indexing="ij")  # TODO: consider pytorch version?
+    yv = yv.to(_device)
+    xv = xv.to(_device)
     """
     S = 13
     yv = tensor([[ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],

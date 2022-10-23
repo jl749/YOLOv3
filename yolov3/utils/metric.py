@@ -63,9 +63,12 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
     """
     _device = pred_boxes[0].device
 
-    mAPs_per_class = [None] * num_classes
-    recalls_per_class = [None] * num_classes
-    precisions_per_class = [None] * num_classes
+    mAPs_per_class = [0] * num_classes
+    recalls_per_class = [0] * num_classes
+    precisions_per_class = [0] * num_classes
+
+    if not any([True if tensor.nelement == 0 else False for tensor in pred_boxes]):  # no predictions
+        return mAPs_per_class, recalls_per_class, precisions_per_class
 
     detections = torch.stack(list(chain.from_iterable(pred_boxes)))
     detections = sorted(detections, key=lambda a: a[2], reverse=True)

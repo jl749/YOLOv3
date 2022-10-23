@@ -23,13 +23,14 @@ import config
 # warnings.filterwarnings("ignore")
 
 parser = argparse.ArgumentParser(description='YOLOv3 training')
+parser.add_argument('--img_size', type=int, nargs='+', default=(416, 416), help='train image spatial dim (H, W)')
 parser.add_argument('--data_dir', type=str, default='data', help='dataset directory')
 parser.add_argument('--epochs', type=int, default=300, help='num epochs for training')
-parser.add_argument('--chkpt',  default='yolov3_pascal_78.1map.pth.tar', type=str, help='fine-tuning chkpt')
+parser.add_argument('--chkpt', type=str, help='fine-tuning chkpt')
 parser.add_argument('--num_classes', type=int, default=20, help='number of classes, VOC=20, COCO=80')
 
 # optimizer
-parser.add_argument('--lr', '--learning_rate', default=1e-3, type=float, help='initial learning rate')
+parser.add_argument('--lr', '--learning_rate', default=1e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='optimizer weight decay')
 parser.add_argument('--step_size', type=int, default=100, help='gamma update step size for LRScheduler')
@@ -51,8 +52,8 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
              model: torch.nn.Module,
              optimizer: torch.optim.Optimizer,
              criterion: torch.nn.Module,
-             scaler,
-             scaled_anchors):
+             scaler, epoch):
+    model.train()
     losses = []
     pbar = tqdm(train_loader, leave=True)
 
@@ -66,14 +67,20 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
         )
 
         with torch.cuda.amp.autocast():  # float16 forward pass
-            out = model(img_batch)
-            loss = (
-                    criterion(out[0], y0, scaled_anchors[0])  # YoloLoss(predicted, target, anchors)
-                    + criterion(out[1], y1, scaled_anchors[1])
-                    + criterion(out[2], y2, scaled_anchors[2])
-            )
+            pred = model(img_batch)
 
-        losses.append(loss.item())  # returns the value of this tensor as a standard Python number
+            criterion.set_anchor(0)
+            big_scale_loss = criterion(pred[0], y0)
+
+            criterion.set_anchor(1)
+            mid_scale_loss = criterion(pred[1], y1)
+
+            criterion.set_anchor(2)
+            small_scale_loss = criterion(pred[2], y2)
+
+            loss = big_scale_loss + mid_scale_loss + small_scale_loss
+
+        losses.append(loss.item())
         optimizer.zero_grad()
         scaler.scale(loss).backward()  # loss.backward()
         scaler.step(optimizer)  # optimizer.step()
@@ -81,7 +88,7 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
 
         # update tqdm progress bar
         mean_loss = sum(losses) / len(losses)
-        pbar.set_postfix(loss=mean_loss)
+        pbar.set_description(f'epoch: {epoch} || loss={mean_loss:.3f}')
 
 
 def eval_func(test_loader: torch.utils.data.DataLoader,
@@ -114,7 +121,11 @@ def main():
     optimizer = optim.SGD(
         model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay
     )
-    criterion = YoloLoss()
+    scaled_anchors = (  # scale anchor boxes 0~1 --> 0~S
+            torch.tensor(config.ANCHORS)
+            * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)  # TODO: image_size from argparse
+    ).to(device)  # (3, 3, 2)
+    criterion = YoloLoss(scaled_anchors)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
     scaler = torch.cuda.amp.GradScaler()
@@ -128,19 +139,12 @@ def main():
             args.chkpt, model, optimizer, args.lr
         )
 
-    scaled_anchors = (  # scale anchor boxes 0~1 --> 0~S
-            torch.tensor(config.ANCHORS)
-            * torch.tensor(config.S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)  # TODO: image_size from argparse
-    ).to(device)  # (3, 3, 2)
-
     for epoch in range(args.epochs):
-        model.train()
         # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
-        train_fn(train_loader, model, optimizer, criterion, scaler, scaled_anchors=scaled_anchors)
-
+        train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
         save_checkpoint(model, optimizer, filename="checkpoint.pth.tar")
 
-        # print(f"Currently epoch {epoch}")
+        # print(f"Current epoch {epoch}")
         # print("On Train Eval loader:")
         # print("On Train loader:")
         # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)
@@ -150,10 +154,10 @@ def main():
         if epoch > 0 and epoch % 10 == 0:
             eval_func(test_loader, model, scaled_anchors=scaled_anchors)
 
-    plot_couple_examples(model, train_eval_loader,
-                         nms_threshold=args.nms_threshold,
-                         threshold=args.conf_threshold,
-                         anchors=config.ANCHORS)
+    # plot_couple_examples(model, train_eval_loader,
+    #                      nms_threshold=args.nms_threshold,
+    #                      threshold=args.conf_threshold,
+    #                      anchors=config.ANCHORS)
 
 
 if __name__ == "__main__":
