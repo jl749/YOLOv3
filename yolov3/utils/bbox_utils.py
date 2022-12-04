@@ -75,12 +75,10 @@ def get_evaluation_bboxes(
         for i, predictions in enumerate(outputs):
             anchors_i = anchors[i]
 
-            _S = predictions.shape[2]
             boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information
                 predictions, anchors_i, is_preds=True
-            )  # (N, num_anchors * S * S, 1+5) with [class index, object score, bounding box coordinates]
-            boxes_scale_i[..., 4:6] = boxes_scale_i[..., 2:4] + boxes_scale_i[..., 4:6]  # xywh --> xyxy
-            boxes_scale_i[..., 2:6] = boxes_scale_i[..., 2:6] / _S
+            )  # (N, num_anchors * S * S, 1+5) with [class index, object score, cx, cy, w, h]
+            boxes_scale_i[..., 2:6] = cxcywh2xyxy(boxes_scale_i[..., 2:6])
 
             for idx, (box) in enumerate(boxes_scale_i):  # loop batches 0 ~ N
                 bboxes[idx] = torch.cat([bboxes[idx], box], dim=0)  # append ScalePrediction_i results
@@ -90,16 +88,14 @@ def get_evaluation_bboxes(
         true_bboxes = cells_to_bboxes(
             labels[-1], anchors[-1], is_preds=False
         )
-        _S = labels[-1].shape[2]
-        true_bboxes[..., 4:6] = true_bboxes[..., 2:4] + true_bboxes[..., 4:6]  # xywh --> xyxy
-        true_bboxes[..., 2:6] = true_bboxes[..., 2:6] / _S
+        true_bboxes[..., 2:6] = cxcywh2xyxy(true_bboxes[..., 2:6])
 
         for idx in range(N):
             # nms_boxes = non_max_suppression(
             #     bboxes[idx],
             #     iou_threshold=iou_threshold,
             #     obj_threshold=conf_threshold,
-            #     box_format="midpoint",
+            #     box_format="midpoint",  # TODO: no need to call cxcywh2xyxy
             # )  # filter predicted bboxes
 
             bbox = bboxes[idx]  # idx_batch bbox
@@ -109,18 +105,10 @@ def get_evaluation_bboxes(
                 scores=bbox[:, 1], iou_threshold=nms_threshold)
             nms_boxes = bbox[_nms_indexes]
 
-            # TODO: remove after mAP debugging
-            # TODO: chkpt from original repo was trained to predict cxcywh (make it predict xywh instead)
-            ############################################################################################################
-            wh = (nms_boxes[..., 4:6] - nms_boxes[..., 2:4]) / 2
-            nms_boxes[..., 2:4] -= wh
-            nms_boxes[..., 4:6] -= wh
-            ############################################################################################################
-
             # DBUGGING =================================================================================================
             # import cv2;import numpy as np
             # np_img = (img_batch[idx].permute(1, 2, 0).numpy() * 255).astype('uint8')
-            # np_img = np.ascontiguousarray(np_img)
+            # np_img = np.ascontiguousarray(np_img[..., ::-1])
             # for b in nms_boxes:
             #     xyxy = (b[2:6] * torch.tensor([W, H, W, H], device=_device)).long().tolist()
             #     cv2.rectangle(np_img, xyxy[:2], xyxy[2:], color=(0, 0, 255), thickness=2)
@@ -140,11 +128,11 @@ def get_evaluation_bboxes(
     return all_pred_boxes, all_true_boxes
 
 
-# TODO: currently returning xywh in 0~S scale maybe returning xyxy format is better?
+# TODO: currently returning cxcywh in 0~S scale maybe returning xyxy format is better?
 def cells_to_bboxes(predictions, anchors, is_preds=True):
     """
-    Post-process logit output of the model (0 ~ S --> 0 ~ S scale)
-    :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, x, y, w, h, class]
+    Post-process logit output of the model (0 ~ S --> 0 ~ 1 scale)
+    :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, cx, cy, w, h, class]
     :param anchors: the anchors used for the predictions (3, 2) must have been scaled up 0~1 --> 0~S
     :param is_preds: whether the input is predictions or the true bounding boxes (label)
     :return: the converted boxes of sizes (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
@@ -153,7 +141,7 @@ def cells_to_bboxes(predictions, anchors, is_preds=True):
     N, _, S, _, _ = predictions.shape
 
     num_anchors = len(anchors)  # 3
-    box_predictions = predictions[..., 1:5]  # (obj_prob, x, y, w, h, class) --> (x, y, w, h)
+    box_predictions = predictions[..., 1:5]  # (obj_prob, cx, cy, w, h, class) --> (cx, cy, w, h)
     if is_preds:  # https://github.com/jl749/YOLOv3/issues/1#issuecomment-1016024032
         # x, y
         box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])
@@ -203,10 +191,10 @@ def cells_to_bboxes(predictions, anchors, is_preds=True):
 
     # cell wise location (0~1 within the cell) to grid-wise location (0~S)
     # mul 1 / S to normalize range 0~N --> 0~1
-    x = (xv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 0:1])  # / S
-    y = (yv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 1:2])  # / S
-    w_h = box_predictions[..., 2:4]  # / S
-    converted_bboxes = torch.cat([best_class, scores, x, y, w_h], dim=-1).reshape(N, num_anchors * S * S, 6)
+    cx = (xv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 0:1]) / S
+    cy = (yv.repeat(1, 3, 1, 1).unsqueeze(-1) + box_predictions[..., 1:2]) / S
+    w_h = box_predictions[..., 2:4] / S
+    converted_bboxes = torch.cat([best_class, scores, cx, cy, w_h], dim=-1).reshape(N, num_anchors * S * S, 6)
     return converted_bboxes
 
 
@@ -216,7 +204,7 @@ def iou(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor, box_format="midpo
     Calculates intersection over union using "coordinates" of the boxes
     :param boxes_preds: Predictions of Bounding Boxes (BATCH_SIZE, 4)
     :param boxes_labels: Correct labels of Bounding Boxes (BATCH_SIZE, 4)
-    :param box_format: midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
+    :param box_format: midpoint/corners, (cx,cy,w,h) or (x1,y1,x2,y2)
     :return: Intersection over union for all examples
     """
     x_hat = boxes_preds[..., 0:1]
@@ -274,8 +262,8 @@ def iou(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor, box_format="midpo
     return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 
-# TODO: deprecated (using torchvision.nms instead)
-# TODO: leaving here for the implementation details
+# TODO: box_format=cxcywh OR xyxy
+# TODO: use torchvision if possible
 def non_max_suppression(bboxes, iou_threshold: float, obj_threshold: float, box_format="corners"):
     """
     Non Max Suppression on given bboxes (S*S, 6)

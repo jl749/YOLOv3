@@ -1,9 +1,11 @@
+from collections import Counter
+from itertools import chain
+from typing import List
+
+from tqdm import tqdm
 import torch
 import torchvision
 
-from typing import List
-from tqdm import tqdm
-from itertools import chain
 
 # TODO: make sure this work
 def check_class_accuracy(model: torch.nn.Module,
@@ -67,12 +69,13 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
     recalls_per_class = [0] * num_classes
     precisions_per_class = [0] * num_classes
 
-    if not any([True if tensor.nelement == 0 else False for tensor in pred_boxes]):  # no predictions
+    if all([True if tensor.nelement == 0 else False for tensor in pred_boxes]):  # no predictions
         return mAPs_per_class, recalls_per_class, precisions_per_class
 
     detections = torch.stack(list(chain.from_iterable(pred_boxes)))
-    detections = sorted(detections, key=lambda a: a[2], reverse=True)
+    detections = sorted(detections, key=lambda a: a[2], reverse=True)  # sort by conf (descending)
     detections = torch.stack(detections)
+
     ground_truths = torch.stack(list(chain.from_iterable(true_boxes)))
 
     for c in range(num_classes):
@@ -80,18 +83,26 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         detections_c = detections[detections[:, 1] == c]
         ground_truths_c = ground_truths[ground_truths[:, 1] == c]
 
+        # {img_idx: number of labels belong to the img}
+        _label_counts_per_img = dict(Counter([gt[0].long().item() for gt in ground_truths]))
+        for k, v in _label_counts_per_img.items():
+            _label_counts_per_img[k] = torch.zeros(v)
+
         TP = torch.zeros((len(detections_c)), dtype=torch.bool)
 
-        for pred_idx, pred in enumerate(detections_c):  # for a single bbox (high conf --> low conf)
+        for i, pred in enumerate(detections_c):  # for a single bbox (high conf --> low conf)
             # TODO: boolean indexing every loop... improvement can be made
-            labels = ground_truths_c[ground_truths_c[:, 0] == pred[0]]  # labels corresponding to the current pred_bbox
+            labels = ground_truths_c[ground_truths_c[:, 0] == pred[0]]  # compare labels and detections from the same img
             if labels.shape[0] == 0:  # empty label
                 continue
 
+            # find best matching GT label from iou_matrix
             iou_matrix = torchvision.ops.box_iou(boxes1=labels[:, 3:], boxes2=pred[3:].unsqueeze(0))
-            max_overlap, _ = torch.max(iou_matrix, dim=0)  # (num_labels, 1) --> (1,)
-            if max_overlap.item() > iou_threshold:
-                TP[pred_idx] = True
+            max_overlap, max_idx = torch.max(iou_matrix, dim=0)  # (label_count, pred_count) --> (pred_count,), pred_count is always 1
+
+            if max_overlap.item() > iou_threshold and _label_counts_per_img[pred[0].item()][max_idx.item()] == 0:
+                TP[i] = True
+                _label_counts_per_img[pred[0].item()][max_idx.item()] = 1  # this GT label has been used
 
         TP_cumsum = torch.cumsum(TP, dim=0)
         FP_cumsum = torch.cumsum(~TP, dim=0)
@@ -99,7 +110,21 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         _precisions = TP_cumsum / (TP_cumsum + FP_cumsum)  # TP_cumsum / TP + FP
         _precisions = torch.cat((torch.tensor([1]), _precisions))
         _recalls = torch.cat((torch.tensor([0]), _recalls))
-        mAP = torch.trapz(_precisions, _recalls)
+
+        # DBUGGING =====================================================================================================
+        # import matplotlib.pyplot as plt
+        # plt.plot(_recalls, _precisions, c="blue")
+        # plt.xlabel("recall")
+        # plt.ylabel("precision")
+        # plt.xlim(0, 1)
+        # plt.ylim(0, 1.1)
+        # plt.title(f"mAP_{iou_threshold}")
+        # plt.grid(color="gray")
+        # plt.savefig('foo.png')
+        # plt.close()
+        # ==============================================================================================================
+
+        mAP = torch.trapz(y=_precisions, x=_recalls)
         mAPs_per_class[c] = mAP.item()
 
         # TODO: make sure

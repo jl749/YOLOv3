@@ -1,7 +1,6 @@
-from torchvision.ops import box_iou
-# import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+
 from yolov3.utils import iou
 
 
@@ -9,7 +8,7 @@ class YoloLoss(nn.Module):
     def __init__(self, rescaled_anchors):
         super().__init__()
         self.mse = nn.MSELoss()
-        self.bce = nn.BCEWithLogitsLoss()  # Binary cross entropy error
+        self.bce = nn.BCEWithLogitsLoss()
         self.cee = nn.CrossEntropyLoss()
         self.sigmoid = nn.Sigmoid()
 
@@ -23,10 +22,9 @@ class YoloLoss(nn.Module):
         self.lambda_box = 10
 
     def set_anchor(self, index):
-        """ which scale anchor to use """
+        """ which scale anchor to use for the forward call """
         self.anchor = self.rescaled_anchors[index]
 
-    # predictions
     def forward(self, predictions, targets):
         _device = predictions[0].device
         # Check where obj and noobj (we ignore if target == -1)
@@ -47,20 +45,24 @@ class YoloLoss(nn.Module):
         # ==================== #
 
         if self.anchor is None:
-            raise ValueError("please set_anchor first before calling forward")
+            raise RuntimeError("please set_anchor first before calling forward")
         rescaled_anchors = self.anchor.reshape(1, 3, 1, 1, 2)  # anchor input = 3X2 (3 anchors each have w,h)
         box_preds = torch.cat([self.sigmoid(predictions[..., 1:3]), torch.exp(predictions[..., 3:5]) * rescaled_anchors], dim=-1)  # (BATCH_SIZE, 3, S, S, 4) [x, y, w, h] in 0~1 scale
         ious = iou(box_preds[obj].detach(), targets[obj][:, 1:5])
 
-        # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj (likelihood actual obj inside predicted bbox)
+        # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj_prob (likelihood actual obj inside predicted bbox)
+        # target_obj_prob = 1 or 0
         object_loss = self.bce(self.sigmoid(predictions[obj][:, 0:1]), ious * targets[obj][:, 0:1])
 
         # ======================== #
         #   FOR BOX COORDINATES    #
         # ======================== #
 
-        predictions[..., 1:3] = self.sigmoid(predictions[..., 1:3])  # x,y coordinates
-        targets[..., 3:5] = torch.log(  # modify target instead of predictions (exp could overflow)
+        predictions[..., 1:3] = self.sigmoid(predictions[..., 1:3])  # x,y coordinates, map to 0~1 range
+
+        # modify target instead of predictions (exp could overflow)
+        # torch.exp(predictions[..., 3:5]) * rescaled_anchors
+        targets[..., 3:5] = torch.log(
             (1e-16 + targets[..., 3:5] / rescaled_anchors)
         )  # width, height coordinates
         box_loss = self.mse(predictions[..., 1:5][obj], targets[..., 1:5][obj])
@@ -73,9 +75,6 @@ class YoloLoss(nn.Module):
             (predictions[obj][:, 5:]), (targets[obj][:, 5].long()),
         )
 
-        import math
-        if math.isnan(box_loss):
-            print()
         # print("__________________________________")
         # print(self.lambda_box * box_loss)
         # print(self.lambda_obj * object_loss)

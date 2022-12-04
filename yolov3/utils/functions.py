@@ -1,65 +1,68 @@
+from typing import Tuple, Literal
+from pathlib import Path
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
-
-from typing import Tuple, Literal
 import cv2
 
 import yolov3.config as config
 from yolov3.utils import cxcywh2xyxy, xywh2xyxy
 
 
-# TODO: remove CONFIG
-def get_loaders(train_csv_path, test_csv_path) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    from yolov3.datasets import VOCDataset
+# TODO: specify which loader (PASCAL?, COCO?)
+def get_loaders(train_csv_path: Path,
+                test_csv_path: Path,
+                img_size: int,
+                batch_size: int,
+                num_workers: int,
+                pin_memory=False) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    from yolov3.datasets import VOCDataset, get_train_transforms, get_test_transforms
 
-    IMAGE_SIZE = config.IMAGE_SIZE
     train_dataset: Dataset = VOCDataset(
         train_csv_path,
-        transform=config.train_transforms,
-        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],  # stride 32, 16, 8
+        transform=get_train_transforms(img_size),
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
+        img_size=img_size
     )
     test_dataset: Dataset = VOCDataset(
         test_csv_path,
-        transform=config.test_transforms,
-        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        transform=get_test_transforms(img_size),
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
-        batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=config.PIN_MEMORY,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
         shuffle=True,
         drop_last=False,
     )
     test_loader = DataLoader(
         dataset=test_dataset,
-        batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=config.PIN_MEMORY,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
         shuffle=False,
         drop_last=False,
     )
 
     train_eval_dataset: Dataset = VOCDataset(
         train_csv_path,
-        transform=config.test_transforms,
-        split_size=[IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8],
+        transform=get_test_transforms(img_size),
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
     )
     train_eval_loader = DataLoader(
         dataset=train_eval_dataset,
-        batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=config.PIN_MEMORY,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
         shuffle=False,
         drop_last=False,
     )
