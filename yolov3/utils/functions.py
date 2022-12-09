@@ -1,6 +1,7 @@
-from typing import Tuple, Literal
+from typing import Tuple, Literal, List
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
@@ -90,6 +91,16 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr) -> None:
     # and it will lead to many hours of debugging, TODO: really? we load optimizer too
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
+
+
+def save_loss_plot(losses: List[int]):
+    plt.plot(losses, c="blue")
+    plt.xlabel("epochs")
+    plt.ylabel("loss")
+    plt.title(f"train_loss")
+    plt.grid(color="gray")
+    plt.savefig('train_loss.png')
+    plt.close()
 
 
 def plot_image(image: np.ndarray, boxes: np.ndarray, box_format: Literal['cxcywh', 'xyxy', 'xywh'] = 'cxcywh'):

@@ -16,6 +16,7 @@ from yolov3.utils import (
     mean_average_precision,
     get_evaluation_bboxes,
     save_checkpoint,
+    save_loss_plot,
     load_checkpoint,
     check_class_accuracy,
     get_loaders,
@@ -89,6 +90,8 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
         mean_loss = total_loss / (batch_idx + 1)
         pbar.set_description(f'epoch: {epoch} || loss={mean_loss:.3f}')
 
+    return mean_loss
+
 
 def eval_func(test_loader: torch.utils.data.DataLoader,
               model: torch.nn.Module,
@@ -146,17 +149,19 @@ def main():
             args.chkpt, model, optimizer, args.lr
         )
 
+    losses = []
     for epoch in range(args.epochs):
         # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
-        train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
+
+        mean_loss = train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
+        losses.append(mean_loss)
+        save_loss_plot(losses)
         save_checkpoint(model, optimizer, filename="checkpoint.pth.tar")
 
-        # print(f"Current epoch {epoch}")
-        # print("On Train Eval loader:")
-        # print("On Train loader:")
         # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)
-        scheduler.step()
 
+        scheduler.step()
+        print(optimizer.param_groups[0]['lr'])
         # EVALUATION every 10 epochs
         if epoch > 0 and epoch % 10 == 0:
             eval_func(test_loader, model, scaled_anchors=scaled_anchors)

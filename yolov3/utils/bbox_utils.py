@@ -107,7 +107,7 @@ def get_evaluation_bboxes(
 
             # DBUGGING =================================================================================================
             # import cv2;import numpy as np
-            # np_img = (img_batch[idx].permute(1, 2, 0).numpy() * 255).astype('uint8')
+            # np_img = (img_batch[idx].permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             # np_img = np.ascontiguousarray(np_img[..., ::-1])
             # for b in nms_boxes:
             #     xyxy = (b[2:6] * torch.tensor([W, H, W, H], device=_device)).long().tolist()

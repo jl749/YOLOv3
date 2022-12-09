@@ -6,4 +6,5 @@
 overfit.pth.tar
 checkpoint.pth.tar
 
+train_loss.png
 yolov3_pascal_78.1map.pth.tar
