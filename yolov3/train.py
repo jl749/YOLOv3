@@ -22,7 +22,7 @@ from yolov3.utils import (
     get_loaders,
     plot_couple_examples,
 )
-from yolov3.config import ANCHORS
+from yolov3.config import ANCHORS, LAMBDA_CLASS, LAMBDA_NOOBJ, LAMBDA_OBJ, LAMBDA_BOX
 
 parser = argparse.ArgumentParser(description='YOLOv3 training')
 parser.add_argument('--img_size', type=int, default=416, help='train image size')
@@ -60,8 +60,10 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
              optimizer: torch.optim.Optimizer,
              criterion: torch.nn.Module,
              scaler, epoch):
+    _device = next(model.parameters()).device
+
     model.train()
-    total_loss = 0
+    loss_tracker = torch.tensor([0, 0, 0, 0], dtype=torch.float32, device=_device, requires_grad=False)
     pbar = tqdm(train_loader, leave=True)
 
     # y = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)], given input img_size=416
@@ -78,7 +80,19 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
             predictions = model(img_batch)  # [(N, 3, 13, 13, 5+num_cls), (N, 3, 26, 26, 5+num_cls), (N, 3, 52, 52, 5+num_cls)]
             for i, pred in enumerate(predictions):  # for each scale (big, mid, small)
                 criterion.set_anchor(i)
-                loss += criterion(pred, labels[i])
+                _box_loss, _object_loss, _no_object_loss, _class_loss = criterion(pred, labels[i])
+
+                _box_loss *= LAMBDA_BOX
+                _object_loss *= LAMBDA_OBJ
+                _no_object_loss *= LAMBDA_NOOBJ
+                _class_loss *= LAMBDA_CLASS
+                loss = _box_loss + _object_loss + _no_object_loss + _class_loss
+
+                with torch.no_grad():
+                    loss_tracker[0] += _box_loss
+                    loss_tracker[1] += _object_loss
+                    loss_tracker[2] += _no_object_loss
+                    loss_tracker[3] += _class_loss
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()  # loss.backward()
@@ -86,11 +100,11 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
         scaler.update()
 
         # update tqdm progress bar
-        total_loss += loss.item()
-        mean_loss = total_loss / (batch_idx + 1)
-        pbar.set_description(f'epoch: {epoch} || loss={mean_loss:.3f}')
+        with torch.no_grad():
+            mean_losses = loss_tracker / (batch_idx + 1)
+        pbar.set_description(f'epoch: {epoch} || box_loss={mean_losses[0]:.3f} || obj_loss={mean_losses[1]:.3f} || no_obj_loss={mean_losses[2]:.3f} || class_loss={mean_losses[3]:.3f}')
 
-    return mean_loss
+    return mean_losses.detach().cpu().tolist()
 
 
 def eval_func(test_loader: torch.utils.data.DataLoader,
@@ -153,15 +167,14 @@ def main():
     for epoch in range(args.epochs):
         # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
 
-        mean_loss = train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
-        losses.append(mean_loss)
+        mean_losses = train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
+        losses.append(mean_losses)
         save_loss_plot(losses)
         save_checkpoint(model, optimizer, filename="checkpoint.pth.tar")
 
         # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)
 
         scheduler.step()
-        print(optimizer.param_groups[0]['lr'])
         # EVALUATION every 10 epochs
         if epoch > 0 and epoch % 10 == 0:
             eval_func(test_loader, model, scaled_anchors=scaled_anchors)

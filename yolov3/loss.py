@@ -15,12 +15,6 @@ class YoloLoss(nn.Module):
         self.rescaled_anchors = rescaled_anchors
         self.anchor = None
 
-        # Constants signifying how much to pay for each respective part of the loss
-        self.lambda_class = 1
-        self.lambda_noobj = 10
-        self.lambda_obj = 1
-        self.lambda_box = 10
-
     def set_anchor(self, index):
         """ which scale anchor to use for the forward call """
         self.anchor = self.rescaled_anchors[index]
@@ -52,7 +46,7 @@ class YoloLoss(nn.Module):
 
         # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj_prob (likelihood actual obj inside predicted bbox)
         # target_obj_prob = 1 or 0
-        object_loss = self.bce(self.sigmoid(predictions[obj][:, 0:1]), ious * targets[obj][:, 0:1])
+        object_loss = self.mse(self.sigmoid(predictions[obj][:, 0:1]), ious * targets[obj][:, 0:1])
 
         # ======================== #
         #   FOR BOX COORDINATES    #
@@ -75,16 +69,4 @@ class YoloLoss(nn.Module):
             (predictions[obj][:, 5:]), (targets[obj][:, 5].long()),
         )
 
-        # print("__________________________________")
-        # print(self.lambda_box * box_loss)
-        # print(self.lambda_obj * object_loss)
-        # print(self.lambda_noobj * no_object_loss)
-        # print(self.lambda_class * class_loss)
-        # print("\n")
-
-        return (
-            self.lambda_box * box_loss
-            + self.lambda_obj * object_loss
-            + self.lambda_noobj * no_object_loss
-            + self.lambda_class * class_loss
-        )
+        return box_loss, object_loss, no_object_loss, class_loss

@@ -93,11 +93,19 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr) -> None:
         param_group["lr"] = lr
 
 
-def save_loss_plot(losses: List[int]):
-    plt.plot(losses, c="blue")
+def save_loss_plot(losses: List[Tuple[float, float, float, float]]):
+    box_losses = [_[0] for _ in losses]
+    obj_losses = [_[1] for _ in losses]
+    no_obj_losses = [_[2] for _ in losses]
+    class_losses = [_[3] for _ in losses]
+    plt.plot(box_losses, c="red", label="box_loss")
+    plt.plot(obj_losses, c="blue", label="obj_loss")
+    plt.plot(no_obj_losses, c="green", label="no_obj_loss")
+    plt.plot(class_losses, c="orange", label="class_loss")
     plt.xlabel("epochs")
     plt.ylabel("loss")
     plt.title(f"train_loss")
+    plt.legend()
     plt.grid(color="gray")
     plt.savefig('train_loss.png')
     plt.close()

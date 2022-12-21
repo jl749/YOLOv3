@@ -17,12 +17,19 @@ def seed_everything(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
+# seed_everything()  # uncomment for deterministic behavior
+
+# Constants signifying how much to pay for each respective part of the loss
+LAMBDA_CLASS = 1
+LAMBDA_NOOBJ = 10
+LAMBDA_OBJ = 1
+LAMBDA_BOX = 10
+
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR.joinpath('data')
 IMG_DIR = DATA_DIR.joinpath("images")
 LABEL_DIR = DATA_DIR.joinpath("labels")
 
-# seed_everything()  # uncomment for deterministic behavior
 
 ANCHORS = [
     [(0.28, 0.22), (0.38, 0.48), (0.9, 0.78)],
