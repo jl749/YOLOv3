@@ -105,32 +105,18 @@ class YOLOv3(nn.Module):
         for i, layer in enumerate(self.layers):
             if isinstance(layer, ScalePrediction):
                 outputs.append(layer(x))
-                # print('###')
-                # print(layer.__class__.__name__, '--------', list(x.shape))
                 continue
 
             x = layer(x)
-            # print(layer.__class__.__name__, '--------', list(x.shape))
-            # if i == 10:  # end of Darknet-53
-            #     print('\n')
 
             if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:  # concat (FPN)
                 route_connections.append(x)
 
             elif isinstance(layer, nn.Upsample):
-                x = torch.cat([x, route_connections[-1]], dim=1)  # feature pyramid network
-                route_connections.pop()
+                _FPN_out = route_connections.pop()
+                x = torch.cat([x, _FPN_out], dim=1)  # feature pyramid network
 
         return outputs  # xywh
-
-    def training_step(self, batch, batch_idx):
-        """
-        return loss
-        :param batch:
-        :param batch_idx:
-        :return:
-        """
-        pass  # return loss
 
     def _create_conv_layers(self):
         layers = nn.ModuleList()
@@ -164,22 +150,19 @@ class YOLOv3(nn.Module):
 
         return layers
 
-    def configure_optimizers(self):
-        """
-        The LightningModule is subclassing Module --> you can access its children parameters directly with self.parameters()
-        :return:
-        """
-        return torch.optim.Adam(self.parameters(), lr=1e-3)  # self.parameters() == model.parameters()
-
 
 if __name__ == "__main__":
     num_classes = 20
     IMAGE_SIZE = 416
     model = YOLOv3(num_classes=num_classes)
+    for n, l in model.named_modules():
+        l.__name__ = n
+        l.register_forward_hook(
+            lambda layer, _, output: print(f"{layer.__name__}: {[o.shape for o in output] if isinstance(output, list) else output.shape}")
+        )
     dummy_input = torch.randn((2, 3, IMAGE_SIZE, IMAGE_SIZE))
     out = model(dummy_input)
 
-    print(len(out))
     print(out[0].shape, out[1].shape, out[2].shape)
     assert model(dummy_input)[0].shape == (2, 3, IMAGE_SIZE // 32, IMAGE_SIZE // 32, num_classes + 5)
     assert model(dummy_input)[1].shape == (2, 3, IMAGE_SIZE // 16, IMAGE_SIZE // 16, num_classes + 5)
