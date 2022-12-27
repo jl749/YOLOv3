@@ -45,8 +45,9 @@ class VOCDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         """
         read annotation file and assign it to the best fitting anchor box and return it as label
-        return - imgs(N, C, H, W),
-               - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]) (obj_prob, x, y, w, h, class)
+        return - imgs(N, C, H, W)
+               - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]) (obj_prob, cx, cy, w, h, class)
+               - annotations(num_boxes, 6) (IMG_INDEX, cx, cy, w, h, class)
         """
         img_path, label_path = self.annotations.iloc[index]
         img_path = str(self.img_dir.joinpath(img_path))
@@ -87,7 +88,7 @@ class VOCDataset(torch.utils.data.Dataset):
 
                 _S = self.S[scale_idx]  # 13, 26, 52
                 i, j = int(_S * y), int(_S * x)  # which cell
-                anchor_taken = targets[scale_idx][anchor_on_scale, i, j, 0]  # object prob
+                anchor_taken = targets[scale_idx][anchor_on_scale, i, j, 0]  # check if an anchor(13x13, 26x26, 32x32) is already reserved for a bbox in previous loop, see issue#4 limitation
                 if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
                     targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1 (occupied)
 
@@ -108,11 +109,23 @@ class VOCDataset(torch.utils.data.Dataset):
                 elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
                     targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
 
-        assert targets[0][torch.where(targets[0][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 13, 13, 6) contains target labels
-        assert targets[1][torch.where(targets[1][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 26, 26, 6) contains target labels
-        assert targets[2][torch.where(targets[2][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 52, 52, 6) contains target labels
+        annotations = [(index,) + b for b in bboxes]  # prepend index to annotation
+        annotations = torch.tensor(annotations, dtype=torch.float32)
+        return image, tuple(targets), annotations  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
 
-        return image, tuple(targets)  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
+    @staticmethod
+    def collate_fn(batch):
+        img_batch = []
+        target_batch = [[], [], []]
+        annot_batch = []
+        for b in batch:
+            img_batch.append(b[0])
+            target_batch[0].append(b[1][0])
+            target_batch[1].append(b[1][1])
+            target_batch[2].append(b[1][2])
+            annot_batch.append(b[2])
+
+        return torch.stack(img_batch, dim=0), [torch.stack(t) for t in target_batch], torch.cat(annot_batch, dim=0)
 
 
 def _test():
@@ -134,7 +147,7 @@ def _test():
     )
 
     loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True)
-    for imgs, labels in loader:
+    for imgs, labels, _ in loader:
         boxes = torch.tensor([])
         num_anchors_per_scale: int = labels[0].shape[1]  # 3
 

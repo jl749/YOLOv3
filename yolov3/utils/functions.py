@@ -43,6 +43,7 @@ def get_loaders(train_csv_path: Path,
         pin_memory=pin_memory,
         shuffle=True,
         drop_last=False,
+        collate_fn=VOCDataset.collate_fn
     )
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -51,6 +52,7 @@ def get_loaders(train_csv_path: Path,
         pin_memory=pin_memory,
         shuffle=False,
         drop_last=False,
+        collate_fn=VOCDataset.collate_fn
     )
 
     train_eval_dataset: Dataset = VOCDataset(
@@ -67,6 +69,7 @@ def get_loaders(train_csv_path: Path,
         pin_memory=pin_memory,
         shuffle=False,
         drop_last=False,
+        collate_fn=VOCDataset.collate_fn
     )
 
     return train_loader, test_loader, train_eval_loader

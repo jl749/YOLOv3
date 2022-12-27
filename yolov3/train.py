@@ -67,7 +67,7 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
     pbar = tqdm(train_loader, leave=True)
 
     # y = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)], given input img_size=416
-    for batch_idx, (img_batch, labels) in enumerate(pbar):
+    for batch_idx, (img_batch, labels, _) in enumerate(pbar):
         img_batch = img_batch.to(device)
         labels = (
             labels[0].to(device),  # (3, 13, 13, 6)

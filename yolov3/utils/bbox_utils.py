@@ -64,7 +64,7 @@ def get_evaluation_bboxes(
     all_pred_boxes = []
     all_true_boxes = []
     pbar = tqdm(iter(loader), file=sys.stdout)
-    for img_batch, labels in pbar:
+    for img_batch, labels, _ in pbar:
         pbar.set_description("EVALUATING ...")
         N, _, H, W = img_batch.shape
         img_batch = img_batch.to(_device)
