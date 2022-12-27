@@ -129,7 +129,7 @@ def get_evaluation_bboxes(
 
 
 # TODO: currently returning cxcywh in 0~S scale maybe returning xyxy format is better?
-def cells_to_bboxes(predictions, anchors, is_preds=True):
+def cells_to_bboxes(predictions, anchors=None, is_preds=True):
     """
     Post-process logit output of the model (0 ~ S --> 0 ~ 1 scale)
     :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, cx, cy, w, h, class]
@@ -140,7 +140,7 @@ def cells_to_bboxes(predictions, anchors, is_preds=True):
     _device = predictions.device
     N, _, S, _, _ = predictions.shape
 
-    num_anchors = len(anchors)  # 3
+    num_anchors: int = 3 if anchors is None else len(anchors)
     box_predictions = predictions[..., 1:5]  # (obj_prob, cx, cy, w, h, class) --> (cx, cy, w, h)
     if is_preds:  # https://github.com/jl749/YOLOv3/issues/1#issuecomment-1016024032
         # x, y

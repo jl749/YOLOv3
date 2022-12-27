@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 import torch
 from torch import Tensor
-import torchvision
 import numpy as np
 import cv2
 
@@ -109,6 +108,10 @@ class VOCDataset(torch.utils.data.Dataset):
                 elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
                     targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
 
+        assert targets[0][torch.where(targets[0][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 13, 13, 6) contains target labels
+        assert targets[1][torch.where(targets[1][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 26, 26, 6) contains target labels
+        assert targets[2][torch.where(targets[2][..., 0] == 1)].shape[0] == len(bboxes)  # make sure (3, 52, 52, 6) contains target labels
+
         return image, tuple(targets)  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
 
 
@@ -130,10 +133,6 @@ def _test():
         img_size=img_size
     )
 
-    S = [img_size // 32, img_size // 16, img_size // 8]  # [13, 26, 52]
-    # scale 0~1 normalized anchors --> 0~S
-    scaled_anchors = torch.tensor(anchors) * torch.tensor(S)[:, None, None]  # (3, 3, 2)
-
     loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True)
     for imgs, labels in loader:
         boxes = torch.tensor([])
@@ -141,11 +140,9 @@ def _test():
 
         # small, medium, big predictions into 0~1 scale again and plot bboxes
         for i in range(num_anchors_per_scale):  # i = 0, 1, 2
-            anchor = scaled_anchors[i]  # (3, 2)
-            print(anchor.shape)
             print(labels[i].shape)
 
-            _label_bboxes = cells_to_bboxes(labels[i], is_preds=False, anchors=anchor)[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
+            _label_bboxes = cells_to_bboxes(labels[i], is_preds=False)[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
 
             boxes = torch.cat([boxes, _label_bboxes], dim=0)  # cxcywh
 
@@ -153,6 +150,7 @@ def _test():
         nms_boxes = nms(boxes.tolist(), iou_threshold=1, obj_threshold=0.7, box_format="midpoint")
         nms_boxes = np.array(nms_boxes)
 
+        # import torchvision
         # boxes = boxes[boxes[:, 1] > 0.7]  # filter by conf_threshold  # TODO: torchvision nms takes xyxy only
         # _nms_indexes = torchvision.ops.nms(boxes=boxes[:, 2:], scores=boxes[:, 1], iou_threshold=1)
         # nms_boxes = boxes[_nms_indexes].numpy()
