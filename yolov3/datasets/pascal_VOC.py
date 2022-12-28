@@ -109,8 +109,7 @@ class VOCDataset(torch.utils.data.Dataset):
                 elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
                     targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
 
-        annotations = [(index,) + b for b in bboxes]  # prepend index to annotation
-        annotations = torch.tensor(annotations, dtype=torch.float32)
+        annotations = torch.tensor(bboxes, dtype=torch.float32)
         return image, tuple(targets), annotations  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
 
     @staticmethod
@@ -125,7 +124,7 @@ class VOCDataset(torch.utils.data.Dataset):
             target_batch[2].append(b[1][2])
             annot_batch.append(b[2])
 
-        return torch.stack(img_batch, dim=0), [torch.stack(t) for t in target_batch], torch.cat(annot_batch, dim=0)
+        return torch.stack(img_batch, dim=0), [torch.stack(t) for t in target_batch], annot_batch
 
 
 def _test():
