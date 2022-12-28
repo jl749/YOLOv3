@@ -48,6 +48,7 @@ class VOCDataset(torch.utils.data.Dataset):
         return - imgs(N, C, H, W)
                - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]) (obj_prob, cx, cy, w, h, class)
                - annotations(num_boxes, 6) (IMG_INDEX, cx, cy, w, h, class)
+               NOTE: cx, cy, w, h are 0~1 normalized
         """
         img_path, label_path = self.annotations.iloc[index]
         img_path = str(self.img_dir.joinpath(img_path))
