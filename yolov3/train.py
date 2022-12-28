@@ -32,12 +32,12 @@ parser.add_argument('--chkpt', type=str, help='fine-tuning chkpt')
 parser.add_argument('--num_classes', type=int, default=20, help='number of classes, VOC=20, COCO=80')
 
 # dataloader
-parser.add_argument('--batch_size', type=int, default=8, help='dataloader batch size')
+parser.add_argument('--batch_size', type=int, default=16, help='dataloader batch size')
 parser.add_argument('--num_workers', type=int, default=0, help='dataloader num workers')
 parser.add_argument('--pin_memeory', action='store_true')  # train on GPU, dataloader --> GPU
 
 # optimizer
-parser.add_argument('--lr', '--learning_rate', default=1e-4, type=float, help='initial learning rate')
+parser.add_argument('--lr', '--learning_rate', default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='optimizer weight decay')
 parser.add_argument('--step_size', type=int, default=100, help='gamma update step size for LRScheduler')
