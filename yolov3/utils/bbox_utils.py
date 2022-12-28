@@ -1,11 +1,15 @@
+from typing import List, Tuple, Union
+import sys
+from copy import copy
+
+from tqdm import tqdm
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import torchvision
+from torch import Tensor
+from numpy import ndarray
 
-import sys
-from typing import List, Tuple
-from tqdm import tqdm
-from copy import copy
 
 # takes both np array and torch tensor
 def cxcywh2xyxy(bbox):
@@ -21,14 +25,22 @@ def xywh2xyxy(bbox):
     return tmp
 
 
-def label_anchor_likelihood(input_wh: torch.Tensor, anchor_wh: torch.Tensor) -> torch.Tensor:
+def label_anchor_likelihood(
+        input_wh: Union[Tensor, ndarray],
+        anchor_wh: Union[Tensor, ndarray]
+) -> Union[Tensor, ndarray]:
     """
     Calculates intersection over union using "width" and "height" of the boxes
-    :param input_wh: width and height of the label
-    :param anchor_wh: widths and heights of the predefined anchors
+    :param input_wh: width and height of the label, (2,) or (N, 2)
+    :param anchor_wh: widths and heights of the predefined anchors, (N, 2)
     :return: IoU between label wh ratio and anchor wh ratio (num_anchors,)
     """
-    intersection = torch.min(input_wh[..., 0], anchor_wh[..., 0]) * torch.min(input_wh[..., 1], anchor_wh[..., 1])
+    assert type(input_wh) == type(anchor_wh), "inputs to `label_anchor_likelihood` have to be equal types"
+
+    if isinstance(input_wh, ndarray):
+        intersection = np.minimum(input_wh[..., 0], anchor_wh[..., 0]) * np.minimum(input_wh[..., 1], anchor_wh[..., 1])
+    else:
+        intersection = torch.min(input_wh[..., 0], anchor_wh[..., 0]) * torch.min(input_wh[..., 1], anchor_wh[..., 1])
     union = input_wh[..., 0] * input_wh[..., 1] + anchor_wh[..., 0] * anchor_wh[..., 1] - intersection
     return intersection / union
 
@@ -69,7 +81,7 @@ def get_evaluation_bboxes(
         N, _, H, W = img_batch.shape
         img_batch = img_batch.to(_device)
         labels = [l.to(_device) for l in labels]
-        outputs: List[torch.Tensor] = model(img_batch)  # 3 scales (small, medium, large)
+        outputs: List[Tensor] = model(img_batch)  # 3 scales (small, medium, large)
 
         bboxes = [torch.tensor([], device=_device) for _ in range(N)]  # prediction instances for mini-batches, reset every batch
         for i, predictions in enumerate(outputs):
@@ -199,7 +211,7 @@ def cells_to_bboxes(predictions, anchors=None, is_preds=True):
 
 
 # TODO: box_format? do we need it?
-def iou(boxes_preds: torch.Tensor, boxes_labels: torch.Tensor, box_format="midpoint") -> torch.Tensor:
+def iou(boxes_preds: Tensor, boxes_labels: Tensor, box_format="midpoint") -> Tensor:
     """
     Calculates intersection over union using "coordinates" of the boxes
     :param boxes_preds: Predictions of Bounding Boxes (BATCH_SIZE, 4)
