@@ -46,7 +46,7 @@ class YoloLoss(nn.Module):
 
         # predicted bbox is not gonna 100% align with the expected bbox --> ious*target_obj_prob (likelihood actual obj inside predicted bbox)
         # target_obj_prob = 1 or 0
-        object_loss = self.mse(self.sigmoid(predictions[obj][:, 0:1]), ious * targets[obj][:, 0:1])
+        object_loss = self.bce(predictions[obj][:, 0:1], ious * targets[obj][:, 0:1])
 
         # ======================== #
         #   FOR BOX COORDINATES    #
