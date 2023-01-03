@@ -210,14 +210,23 @@ def cells_to_bboxes(predictions, anchors=None, is_preds=True):
     return converted_bboxes
 
 
-# TODO: box_format? do we need it?
 def iou(boxes_preds: Tensor, boxes_labels: Tensor, box_format="midpoint") -> Tensor:
     """
     Calculates intersection over union using "coordinates" of the boxes
-    :param boxes_preds: Predictions of Bounding Boxes (BATCH_SIZE, 4)
-    :param boxes_labels: Correct labels of Bounding Boxes (BATCH_SIZE, 4)
+    e.g.
+    (xywh), (xywh), (xywh), (xywh)
+       |       |       |       |        ==> 4 ious
+    (xywh), (xywh), (xywh), (xywh)
+
+    e.g.
+       (         xywh         )
+       /       /      \       \         ==> 4 ious
+    (xywh), (xywh), (xywh), (xywh)
+
+    :param boxes_preds: Predictions of Bounding Boxes (N, 4) or (1, 4)
+    :param boxes_labels: Correct labels of Bounding Boxes (N, 4) or (1, 4)
     :param box_format: midpoint/corners, (cx,cy,w,h) or (x1,y1,x2,y2)
-    :return: Intersection over union for all examples
+    :return: Intersection over union for all examples (N, 1)
     """
     x_hat = boxes_preds[..., 0:1]
     y_hat = boxes_preds[..., 1:2]
