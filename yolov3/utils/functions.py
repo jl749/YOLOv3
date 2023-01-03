@@ -23,7 +23,7 @@ def get_loaders(train_csv_path: Path,
 
     train_dataset: Dataset = VOCDataset(
         train_csv_path,
-        transform=get_train_transforms(img_size),
+        transform=get_train_transforms,
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
@@ -31,7 +31,7 @@ def get_loaders(train_csv_path: Path,
     )
     test_dataset: Dataset = VOCDataset(
         test_csv_path,
-        transform=get_test_transforms(img_size),
+        transform=get_test_transforms,
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,
@@ -57,7 +57,7 @@ def get_loaders(train_csv_path: Path,
 
     train_eval_dataset: Dataset = VOCDataset(
         train_csv_path,
-        transform=get_test_transforms(img_size),
+        transform=get_test_transforms,
         img_dir=config.IMG_DIR,
         label_dir=config.LABEL_DIR,
         anchors=config.ANCHORS,

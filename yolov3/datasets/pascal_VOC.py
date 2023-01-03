@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Callable
 from pathlib import Path
 
 import pandas as pd
@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 import numpy as np
 import cv2
+from albumentations.pytorch import ToTensorV2
 
 from yolov3.utils import (
     cells_to_bboxes,
@@ -20,24 +21,25 @@ class VOCDataset(torch.utils.data.Dataset):
                  csv_file: Path,
                  img_dir: Path,
                  label_dir: Path,
-                 anchors,
+                 anchors=None,
                  img_size=416, num_classes=20,
-                 transform=None,
+                 transform: Callable = lambda _: ToTensorV2(),
                  ):
+        self.C = num_classes
         self.annotations: pd.DataFrame = pd.read_csv(csv_file, header=None)
         self.img_dir = img_dir
         self.label_dir = label_dir
-        self.img_size = img_size  # TODO: __get_item__ accordingly
-        self.transform = transform
-        self.S = [img_size // 32, img_size // 16, img_size // 8]
+        self.transform = transform(img_size)
 
         # anchors[0] contains the largest, anchors[2] contains the smallest object scales
-        self.anchors = torch.tensor(anchors[0] + anchors[1] + anchors[2])  # (3, 3, 2) --> (9, 2)
-
-        self.num_anchors = self.anchors.shape[0]  # total 9 anchor boxes
-        self.num_anchors_per_scale = self.num_anchors // 3  # anchor boxes per ScalePrediction (small, medium. big)
-        self.C = num_classes
-        self.ignore_iou_thresh = 0.5
+        if anchors is None:
+            self.anchors = None
+        else:
+            self.anchors = torch.tensor(anchors[0] + anchors[1] + anchors[2])  # (3, 3, 2) --> (9, 2)
+            self.num_anchors = self.anchors.shape[0]  # total 9 anchor boxes
+            self.num_anchors_per_scale = self.num_anchors // 3  # anchor boxes per ScalePrediction (small, medium. big)
+            self.ignore_iou_thresh = 0.5
+            self.S = [img_size // 32, img_size // 16, img_size // 8]
 
     def __len__(self):
         return len(self.annotations)
@@ -67,51 +69,58 @@ class VOCDataset(torch.utils.data.Dataset):
             augmentations = self.transform(image=image, bboxes=bboxes)
             image: Tensor = augmentations["image"]  # CHW
             bboxes: List[tuple] = augmentations["bboxes"]
-
-        # S = 13, 26, 52
-        # total_anchors // 3 = 3 (number of predictions we make)
-        # mapping bbox annotations into model output format
-        # targets.shape = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]
-        targets = [torch.zeros((self.num_anchors // 3, S, S, 6)) for S in self.S]  # (obj_prob, cx, cy, w, h, class)
-
-        for box in bboxes:  # for every labels (cx, cy, w, h, class)
-            x, y, width, height, class_label = box
-
-            # iou between a current bbox and all the anchor box candidates
-            iou_anchors = label_anchor_likelihood(torch.tensor(box[2:4]), self.anchors)  # (9,)
-            anchor_indices = iou_anchors.argsort(descending=True, dim=0)  # argsort its likelihood indexes
-            has_anchor = [False] * self.num_anchors_per_scale  # each scale prediction (small, medium, big) can have only one anchor box
-
-            for anchor_idx in anchor_indices:  # high likelihood anchor box --> low likelihood anchor box
-                # which scale does this anchor belong to (small, medium, big)
-                scale_idx: int = torch.div(anchor_idx, self.num_anchors_per_scale, rounding_mode='trunc').item()
-                anchor_on_scale: int = (anchor_idx % self.num_anchors_per_scale).item()  # which anchor within the selected scale?
-
-                _S = self.S[scale_idx]  # 13, 26, 52
-                i, j = int(_S * y), int(_S * x)  # which cell
-                anchor_taken = targets[scale_idx][anchor_on_scale, i, j, 0]  # check if an anchor(13x13, 26x26, 32x32) is already reserved for a bbox in previous loop, see issue#4 limitation
-                if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
-                    targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1 (occupied)
-
-                    x_cell, y_cell = _S * x - j, _S * y - i  # cell-wise x, y coordinate [0~1]
-                    w_cell, h_cell = (
-                        width * _S,
-                        height * _S,
-                    )  # can be greater than 1 since it's relative to the cell
-                    _box_coordinates = torch.tensor(
-                        [x_cell, y_cell, w_cell, h_cell]
-                    )
-                    targets[scale_idx][anchor_on_scale, i, j, 1:5] = _box_coordinates  # set x,y,w,h [0~1] [0~S]
-                    targets[scale_idx][anchor_on_scale, i, j, 5] = int(class_label)
-                    has_anchor[scale_idx] = True  # obj marked in this scale move on to the next scale
-
-                # one scale should have one anchor box, but if the other anchor box in the same scale has high enouch IoU
-                # ignore it so that YOLO does not consider it as no object (no punish)
-                elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
-                    targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
-
         annotations = torch.tensor(bboxes, dtype=torch.float32)
-        return image, tuple(targets), annotations  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
+
+        if self.anchors is None:
+            return image, annotations
+
+        else:
+            # S = 13, 26, 52
+            # total_anchors // 3 = 3 (number of predictions we make)
+            # mapping bbox annotations into model output format
+            # targets.shape = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]
+            targets = [torch.zeros((self.num_anchors // 3, S, S, 6)) for S in self.S]  # (obj_prob, cx, cy, w, h, class)
+
+            for box in bboxes:  # for every labels (cx, cy, w, h, class)
+                x, y, width, height, class_label = box
+
+                # iou between a current bbox and all the anchor box candidates
+                iou_anchors = label_anchor_likelihood(torch.tensor(box[2:4]), self.anchors)  # (9,)
+                anchor_indices = iou_anchors.argsort(descending=True, dim=0)  # argsort its likelihood indexes
+                has_anchor = [
+                                 False] * self.num_anchors_per_scale  # each scale prediction (small, medium, big) can have only one anchor box
+
+                for anchor_idx in anchor_indices:  # high likelihood anchor box --> low likelihood anchor box
+                    # which scale does this anchor belong to (small, medium, big)
+                    scale_idx: int = torch.div(anchor_idx, self.num_anchors_per_scale, rounding_mode='trunc').item()
+                    anchor_on_scale: int = (
+                                anchor_idx % self.num_anchors_per_scale).item()  # which anchor within the selected scale?
+
+                    _S = self.S[scale_idx]  # 13, 26, 52
+                    i, j = int(_S * y), int(_S * x)  # which cell
+                    anchor_taken = targets[scale_idx][
+                        anchor_on_scale, i, j, 0]  # check if an anchor(13x13, 26x26, 32x32) is already reserved for a bbox in previous loop, see issue#4 limitation
+                    if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
+                        targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1 (occupied)
+
+                        x_cell, y_cell = _S * x - j, _S * y - i  # cell-wise x, y coordinate [0~1]
+                        w_cell, h_cell = (
+                            width * _S,
+                            height * _S,
+                        )  # can be greater than 1 since it's relative to the cell
+                        _box_coordinates = torch.tensor(
+                            [x_cell, y_cell, w_cell, h_cell]
+                        )
+                        targets[scale_idx][anchor_on_scale, i, j, 1:5] = _box_coordinates  # set x,y,w,h [0~1] [0~S]
+                        targets[scale_idx][anchor_on_scale, i, j, 5] = int(class_label)
+                        has_anchor[scale_idx] = True  # obj marked in this scale move on to the next scale
+
+                    # one scale should have one anchor box, but if the other anchor box in the same scale has high enouch IoU
+                    # ignore it so that YOLO does not consider it as no object (no punish)
+                    elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
+                        targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
+
+            return image, tuple(targets), annotations  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
 
     @staticmethod
     def collate_fn(batch):
@@ -135,14 +144,13 @@ def _test():
     # 3 scale predictions, 3 anchor boxes per cell
 
     from yolov3.datasets import get_train_transforms, get_test_transforms
-    transform = get_test_transforms(img_size=img_size)
 
     dataset = VOCDataset(
         BASE_DIR.joinpath("data/train.csv"),
         BASE_DIR.joinpath("data/images/"),
         BASE_DIR.joinpath("data/labels/"),
         anchors=anchors,
-        transform=transform,
+        transform=get_test_transforms,
         img_size=img_size
     )
 
