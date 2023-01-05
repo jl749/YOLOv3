@@ -58,7 +58,7 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
                            ):
     """
     calculate mAP
-    :param pred_boxes: predicted bboxes [[train_idx, class_pred, obj_prob, x, y, x, y], ...]
+    :param pred_boxes: predicted bboxes [[class, conf, x, y, x, y], ...]
     :param true_boxes: expected bboxes  [[train_idx, class_pred, obj_prob, x, y, x, y], ...]
     :param num_classes: pascal_voc=20, coco=80
     :param iou_threshold: iou_threshold to determine TP, FP
@@ -72,55 +72,49 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
     if all([True if tensor.nelement() == 0 else False for tensor in pred_boxes]):  # no predictions
         return mAPs_per_class, recalls_per_class, precisions_per_class
 
+    pred_boxes = [torch.cat([torch.tensor(i, device=_device).repeat(p.shape[0], 1), p], dim=1) for i, p in enumerate(pred_boxes)]  # prepend prediction index
     detections = torch.stack(list(chain.from_iterable(pred_boxes)))
-    detections = sorted(detections, key=lambda a: a[2], reverse=True)  # sort by conf (descending)
-    detections = torch.stack(detections)
+    detections = detections[torch.argsort(detections[:, 2], descending=True)]  # sort by conf (descending)
 
     ground_truths = torch.stack(list(chain.from_iterable(true_boxes)))
 
     for c in range(num_classes):
         # filter by class
         detections_c = detections[detections[:, 1] == c]
-        ground_truths_c = ground_truths[ground_truths[:, 1] == c]
+        ground_truths_c = ground_truths[ground_truths[:, -1] == c]
 
-        # {img_idx: number of labels belong to the img}
-        _label_counts_per_img = dict(Counter([gt[0].long().item() for gt in ground_truths]))
-        for k, v in _label_counts_per_img.items():
-            _label_counts_per_img[k] = torch.zeros(v)
-
+        _label_counts_per_img = [torch.zeros(tb.shape[0], dtype=torch.bool) for tb in true_boxes]
         TP = torch.zeros((len(detections_c)), dtype=torch.bool)
 
         for i, pred in enumerate(detections_c):  # for a single bbox (high conf --> low conf)
-            # TODO: boolean indexing every loop... improvement can be made
-            labels = ground_truths_c[ground_truths_c[:, 0] == pred[0]]  # compare labels and detections from the same img
+            _img_idx = pred[0].long()
+            labels = true_boxes[_img_idx].to(_device)  # compare labels and detections from the same img
             if labels.shape[0] == 0:  # empty label
                 continue
 
             # find best matching GT label from iou_matrix
-            iou_matrix = torchvision.ops.box_iou(boxes1=labels[:, 3:], boxes2=pred[3:].unsqueeze(0))
+            iou_matrix = torchvision.ops.box_iou(boxes1=labels[:, 0:4], boxes2=pred[3:7].unsqueeze(0))
             max_overlap, max_idx = torch.max(iou_matrix, dim=0)  # (label_count, pred_count) --> (pred_count,), pred_count is always 1
 
-            if max_overlap.item() > iou_threshold and _label_counts_per_img[pred[0].item()][max_idx.item()] == 0:
+            if max_overlap.gt(iou_threshold) and not _label_counts_per_img[_img_idx][max_idx.item()].is_nonzero():
                 TP[i] = True
-                _label_counts_per_img[pred[0].item()][max_idx.item()] = 1  # this GT label has been used
+                _label_counts_per_img[_img_idx][max_idx.item()] = True  # this GT label has been used
 
         TP_cumsum = torch.cumsum(TP, dim=0)
         FP_cumsum = torch.cumsum(~TP, dim=0)
         _recalls = TP_cumsum / ground_truths_c.shape[0]  # TP_cumsum / total_GT_boxes
         _precisions = TP_cumsum / (TP_cumsum + FP_cumsum)  # TP_cumsum / TP + FP
-        _precisions = torch.cat((torch.tensor([1]), _precisions))
-        _recalls = torch.cat((torch.tensor([0]), _recalls))
+        _precisions = torch.cat([torch.tensor([1]), _precisions])  # torch.tensor([0])
+        _recalls = torch.cat([torch.tensor([0]), _recalls])  # _recalls[-2:-1]
 
         # DBUGGING =====================================================================================================
         # import matplotlib.pyplot as plt
         # plt.plot(_recalls, _precisions, c="blue")
         # plt.xlabel("recall")
         # plt.ylabel("precision")
-        # plt.xlim(0, 1)
-        # plt.ylim(0, 1.1)
         # plt.title(f"mAP_{iou_threshold}")
         # plt.grid(color="gray")
-        # plt.savefig('foo.png')
+        # plt.show()
         # plt.close()
         # ==============================================================================================================
 

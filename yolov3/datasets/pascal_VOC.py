@@ -50,7 +50,7 @@ class VOCDataset(torch.utils.data.Dataset):
         return - imgs(N, C, H, W)
                - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]), (conf, cx, cy, w, h, class)
                     cx, cy --> cell-wise coordinates (see line 105)
-               - annotations(num_boxes, 6) (IMG_INDEX, cx, cy, w, h, class)
+               - annotations(num_boxes, 5) (cx, cy, w, h, class)
                NOTE: cx, cy, w, h are 0~1 normalized
         """
         img_path, label_path = self.annotations.iloc[index]
@@ -119,7 +119,7 @@ class VOCDataset(torch.utils.data.Dataset):
                     elif not anchor_taken and iou_anchors[anchor_idx] > self.ignore_iou_thresh:  # obj prob == 0 and IoU higher than threshold
                         targets[scale_idx][anchor_on_scale, i, j, 0] = -1  # ignore prediction
 
-            return image, tuple(targets), annotations  # img, ( (3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6) )
+            return image, tuple(targets), annotations
 
     @staticmethod
     def collate_fn(batch):
@@ -168,7 +168,7 @@ def _test():
         for i in range(num_anchors_per_scale):  # i = 0, 1, 2
             print(labels[i].shape)
 
-            _label_bboxes = cells_to_bboxes(labels[i], is_preds=False)[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
+            _label_bboxes = cells_to_bboxes(labels[i])[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
 
             boxes = torch.cat([boxes, _label_bboxes], dim=0)  # cxcywh
 

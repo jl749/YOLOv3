@@ -34,18 +34,18 @@ parser.add_argument('--num_classes', type=int, default=20, help='number of class
 # dataloader
 parser.add_argument('--batch_size', type=int, default=16, help='dataloader batch size')
 parser.add_argument('--num_workers', type=int, default=0, help='dataloader num workers')
-parser.add_argument('--pin_memeory', action='store_true')  # train on GPU, dataloader --> GPU
+parser.add_argument('--pin_memory', action='store_true')  # train on GPU, dataloader --> GPU
 
 # optimizer
-parser.add_argument('--lr', '--learning_rate', default=1e-3, type=float, help='initial learning rate')
+parser.add_argument('--lr', '--learning_rate', default=1e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
-parser.add_argument('--weight_decay', type=float, default=1e-4, help='optimizer weight decay')
+parser.add_argument('--weight_decay', type=float, default=5e-4, help='optimizer weight decay')
 parser.add_argument('--step_size', type=int, default=100, help='gamma update step size for LRScheduler')
 parser.add_argument('--gamma', type=float, default=0.1, help='gamma update for LRScheduler')
 
 # prediction hyperparameters
 parser.add_argument('--nms_threshold', type=float, default=0.45, help='nms threshold for prediction')
-parser.add_argument('--conf_threshold', type=float, default=0.2, help='confidence threshold for prediction')
+parser.add_argument('--conf_threshold', type=float, default=0.5, help='confidence threshold for prediction')
 parser.add_argument('--iou_threshold', type=float, default=0.5, help='iou threshold for evaluation (TP, FP boundary)')
 
 parser.add_argument('--cuda', action='store_true', default=True, help='use cuda')
@@ -59,51 +59,49 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
              model: torch.nn.Module,
              optimizer: torch.optim.Optimizer,
              criterion: torch.nn.Module,
+             scaled_anchors,
              scaler, epoch):
     _device = next(model.parameters()).device
 
     model.train()
-    loss_tracker = torch.tensor([0, 0, 0, 0], dtype=torch.float32, device=_device, requires_grad=False)
+    total_loss = torch.tensor([0, 0, 0, 0], dtype=torch.float32, device=_device, requires_grad=False)
     pbar = tqdm(train_loader, leave=True)
 
     # y = [(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)], given input img_size=416
     for batch_idx, (img_batch, labels, _) in enumerate(pbar):
         img_batch = img_batch.to(device)
         labels = (
-            labels[0].to(device),  # (3, 13, 13, 6)
+            labels[0].to(device),  # (3, 13, 13, 6), [conf, cx, cy, w, h, cls]
             labels[1].to(device),  # (3, 26, 26, 6)
             labels[2].to(device),  # (3, 52, 52, 6)
         )
 
-        loss = 0.
         with torch.cuda.amp.autocast():  # float16 forward pass
             predictions = model(img_batch)  # [(N, 3, 13, 13, 5+num_cls), (N, 3, 26, 26, 5+num_cls), (N, 3, 52, 52, 5+num_cls)]
-            for i, pred in enumerate(predictions):  # for each scale (big, mid, small)
-                criterion.set_anchor(i)
-                _box_loss, _object_loss, _no_object_loss, _class_loss = criterion(pred, labels[i])
+            _loss1: tuple = criterion(predictions[0], labels[0], scaled_anchors[0])
+            _loss2: tuple = criterion(predictions[1], labels[1], scaled_anchors[1])
+            _loss3: tuple = criterion(predictions[2], labels[2], scaled_anchors[2])
 
-                _box_loss *= LAMBDA_BOX
-                _object_loss *= LAMBDA_OBJ
-                _no_object_loss *= LAMBDA_NOOBJ
-                _class_loss *= LAMBDA_CLASS
-                loss = _box_loss + _object_loss + _no_object_loss + _class_loss
+        _box_loss = (_loss1[0] + _loss2[0] + _loss3[0]) * LAMBDA_BOX
+        _obj_loss = (_loss1[1] + _loss2[1] + _loss3[1]) * LAMBDA_OBJ
+        _noobj_loss = (_loss1[2] + _loss2[2] + _loss3[2]) * LAMBDA_NOOBJ
+        _cls_loss = (_loss1[3] + _loss2[3] + _loss3[3]) * LAMBDA_CLASS
 
-                with torch.no_grad():
-                    loss_tracker[0] += _box_loss
-                    loss_tracker[1] += _object_loss
-                    loss_tracker[2] += _no_object_loss
-                    loss_tracker[3] += _class_loss
-
+        loss = _box_loss + _obj_loss + _noobj_loss + _cls_loss
         optimizer.zero_grad()
         scaler.scale(loss).backward()  # loss.backward()
         scaler.step(optimizer)  # optimizer.step()
         scaler.update()
 
-        # update tqdm progress bar
         with torch.no_grad():
-            mean_losses = loss_tracker / (batch_idx + 1)
-        pbar.set_description(f'epoch: {epoch} || box_loss={mean_losses[0]:.3f} || obj_loss={mean_losses[1]:.3f} || no_obj_loss={mean_losses[2]:.3f} || class_loss={mean_losses[3]:.3f}')
+            total_loss[0] += _box_loss
+            total_loss[1] += _obj_loss
+            total_loss[2] += _noobj_loss
+            total_loss[3] += _cls_loss
+            avg_loss = total_loss / (batch_idx + 1)
+        pbar.set_description(f'epoch: {epoch} || box_loss={avg_loss[0]:.3f} || obj_loss={avg_loss[1]:.3f} || no_obj_loss={avg_loss[2]:.3f} || class_loss={avg_loss[3]:.3f}')
 
+    mean_losses = total_loss / len(train_loader)
     return mean_losses.detach().cpu().tolist()
 
 
@@ -115,7 +113,7 @@ def eval_func(test_loader: torch.utils.data.DataLoader,
         test_loader,
         model,
         nms_threshold=args.nms_threshold,
-        anchors=scaled_anchors,
+        scaled_anchors=scaled_anchors,
         conf_threshold=args.conf_threshold,
     )
 
@@ -144,7 +142,7 @@ def main():
             torch.tensor(ANCHORS)
             * torch.tensor(_S).unsqueeze(1).unsqueeze(1).repeat(1, 3, 2)
     ).to(device)  # (3, 3, 2)
-    criterion = YoloLoss(scaled_anchors)
+    criterion = YoloLoss()
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
     scaler = torch.cuda.amp.GradScaler()
@@ -155,21 +153,23 @@ def main():
         img_size=args.img_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=args.pin_memeory
+        pin_memory=args.pin_memory
     )
 
     if args.chkpt:  # if provided
         load_checkpoint(
             args.chkpt, model, optimizer, args.lr
         )
+        eval_func(test_loader, model, scaled_anchors=scaled_anchors)
 
     losses = []
     for epoch in range(args.epochs):
         # plot_couple_examples(model, test_loader, 0.6, 0.5, scaled_anchors)
 
-        mean_losses = train_fn(train_loader, model, optimizer, criterion, scaler, epoch=epoch)
+        mean_losses = train_fn(train_loader, model, optimizer, criterion, scaled_anchors, scaler, epoch=epoch)
         losses.append(mean_losses)
         save_loss_plot(losses)
+        print(f"=> total_loss: {sum(mean_losses):.3f}")
         save_checkpoint(model, optimizer, filename="checkpoint.pth.tar")
 
         # check_class_accuracy(model, train_loader, threshold=args.conf_threshold)

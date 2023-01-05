@@ -51,8 +51,8 @@ def get_evaluation_bboxes(
         model: torch.nn.Module,
         nms_threshold: float,
         conf_threshold: float,
-        anchors: List[List[Tuple[float]]],  # 0~S scaled
-        # box_format="midpoint",
+        scaled_anchors: List[List[Tuple[float]]],  # 0~S scaled
+        # box_format="midpoint",  # TODO: return type either cxcywh, xyxy
 ):
     """
     [POSTPROCESS]
@@ -62,7 +62,7 @@ def get_evaluation_bboxes(
     :param loader: DataLoader
     :param model:
     :param nms_threshold: iou threshold where predicted bboxes is correct (nms)
-    :param anchors: pre-defined(K-means) anchors
+    :param scaled_anchors: pre-defined(K-means) anchors
     :param conf_threshold: threshold to remove predicted bboxes (independent of IoU)
     # :param box_format:
     :return: final predicted(nms applied) bboxes, expected bboxes
@@ -72,35 +72,30 @@ def get_evaluation_bboxes(
     model.eval()
     _device = next(model.parameters()).device
 
-    train_idx = 0  # distinguish image
     all_pred_boxes = []
     all_true_boxes = []
     pbar = tqdm(iter(loader), file=sys.stdout)
-    for img_batch, labels, _ in pbar:
+    for imgs, _, annots in pbar:
         pbar.set_description("EVALUATING ...")
-        N, _, H, W = img_batch.shape
-        img_batch = img_batch.to(_device)
-        labels = [l.to(_device) for l in labels]
-        outputs: List[Tensor] = model(img_batch)  # 3 scales (small, medium, large)
+        N, _, H, W = imgs.shape
+        imgs = imgs.to(_device)
+        predictions: List[Tensor] = model(imgs)  # 3 scales (small, medium, large)
 
-        bboxes = [torch.tensor([], device=_device) for _ in range(N)]  # prediction instances for mini-batches, reset every batch
-        for i, predictions in enumerate(outputs):
-            anchors_i = anchors[i]
+        bboxes = [torch.tensor([], device=_device) for _ in range(N)]  # predictions per batch
+        for i, pred in enumerate(predictions):
+            _boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information
+                pred, scaled_anchors[i]
+            )  # (N, num_anchors * S * S, 6) with [class index, object score, cx, cy, w, h]
+            _boxes_scale_i[..., 2:6] = cxcywh2xyxy(_boxes_scale_i[..., 2:6])
 
-            boxes_scale_i = cells_to_bboxes(  # cell-wise --> img-wise bbox information
-                predictions, anchors_i, is_preds=True
-            )  # (N, num_anchors * S * S, 1+5) with [class index, object score, cx, cy, w, h]
-            boxes_scale_i[..., 2:6] = cxcywh2xyxy(boxes_scale_i[..., 2:6])
-
-            for idx, (box) in enumerate(boxes_scale_i):  # loop batches 0 ~ N
+            for idx, (box) in enumerate(_boxes_scale_i):
                 bboxes[idx] = torch.cat([bboxes[idx], box], dim=0)  # append ScalePrediction_i results
 
-        # we just want one bbox for each label, not one for each scale
-        # true_bboxes = expected lables
-        true_bboxes = cells_to_bboxes(
-            labels[-1], anchors[-1], is_preds=False
-        )
-        true_bboxes[..., 2:6] = cxcywh2xyxy(true_bboxes[..., 2:6])
+        # decode label (N, num_anchors, S, S, 6) to obtain annotation
+        # true_bboxes = cells_to_bboxes(labels[-1], scaled_anchors[-1])
+        for annot in annots:
+            annot[:4] = cxcywh2xyxy(annot[:4])
+        all_true_boxes.extend(annots)
 
         for idx in range(N):
             # nms_boxes = non_max_suppression(
@@ -119,7 +114,7 @@ def get_evaluation_bboxes(
 
             # DBUGGING =================================================================================================
             # import cv2;import numpy as np
-            # np_img = (img_batch[idx].permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+            # np_img = (imgs[idx].permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             # np_img = np.ascontiguousarray(np_img[..., ::-1])
             # for b in nms_boxes:
             #     xyxy = (b[2:6] * torch.tensor([W, H, W, H], device=_device)).long().tolist()
@@ -129,38 +124,38 @@ def get_evaluation_bboxes(
             # cv2.destroyAllWindows()
             # ==========================================================================================================
 
-            img_idx_info = torch.tensor([train_idx], device=_device)
-            all_pred_boxes.append(torch.cat([img_idx_info.repeat(nms_boxes.shape[0], 1), nms_boxes], dim=1))
-            all_true_boxes.append(
-                torch.stack([torch.cat([img_idx_info, box])
-                             for box in true_bboxes[idx] if box[1] > conf_threshold], dim=0)
-            )
-            train_idx += 1  # img index
-            assert train_idx == len(all_pred_boxes) == len(all_true_boxes)
+            all_pred_boxes.append(nms_boxes)
     return all_pred_boxes, all_true_boxes
 
 
-# TODO: currently returning cxcywh in 0~S scale maybe returning xyxy format is better?
-def cells_to_bboxes(predictions, anchors=None, is_preds=True):
+def cells_to_bboxes(predictions, scaled_anchors=None):
     """
-    Post-process logit output of the model (0 ~ S --> 0 ~ 1 scale)
-    :param predictions: tensor of size (N, 3, S, S, 6) __ [obj_prob, cx, cy, w, h, class]
-    :param anchors: the anchors used for the predictions (3, 2) must have been scaled up 0~1 --> 0~S
-    :param is_preds: whether the input is predictions or the true bounding boxes (label)
-    :return: the converted boxes of sizes (N, num_anchors, S, S, 1+5) with class index, object score, bounding box coordinates
+    Decode logit output of the model
+    cell-wise info --> img-wise info (0~1 normalized)
+    e.g. prediction = model output
+    (N, num_anchors, S, S, 5+num_cls) --> (N, num_anchors * S * S, 6)
+    e.g. prediction = label
+    (N, num_anchors, S, S, 6) --> (N, num_anchors * S * S, 6)
+
+    :param predictions: (N, num_anchors, S, S, 5+num_cls) or (N, num_anchors, S, S, 6)
+    :param scaled_anchors: the anchors used for the predictions (3, 2), None if predictions = label
+    :return: img-wise 0~1 normalized annotation
+            (N, num_anchors*S*S, 6), [class index, object score, bounding box coordinates]
     """
     _device = predictions.device
     N, _, S, _, _ = predictions.shape
 
-    num_anchors: int = 3 if anchors is None else len(anchors)
-    box_predictions = predictions[..., 1:5]  # (obj_prob, cx, cy, w, h, class) --> (cx, cy, w, h)
+    is_preds = False if predictions.shape[-1] == 6 else True
+
+    num_anchors: int = 3 if scaled_anchors is None else len(scaled_anchors)
+    box_predictions = predictions[..., 1:5]  # (conf, cx, cy, w, h, class) --> (cx, cy, w, h)
     if is_preds:  # https://github.com/jl749/YOLOv3/issues/1#issuecomment-1016024032
         # x, y
         box_predictions[..., 0:2] = torch.sigmoid(box_predictions[..., 0:2])
 
         # w, h
-        anchors = anchors.reshape(1, len(anchors), 1, 1, 2)
-        box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * anchors  # (N, 3, S, S, 2) * (N, 3, 1, 1, 2)
+        scaled_anchors = scaled_anchors.reshape(1, len(scaled_anchors), 1, 1, 2)
+        box_predictions[..., 2:] = torch.exp(box_predictions[..., 2:]) * scaled_anchors  # (N, 3, S, S, 2) * (N, 3, 1, 1, 2)
 
         scores = torch.sigmoid(predictions[..., 0:1])
         best_class = torch.argmax(predictions[..., 5:], dim=-1).unsqueeze(-1)  # best conditional prob, P(class_i | obj)
