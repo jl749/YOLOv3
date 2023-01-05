@@ -155,7 +155,13 @@ def _test():
     )
 
     loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True)
-    for imgs, labels, _ in loader:
+    for imgs, labels, annots in loader:
+        # EASY WAY =====================================================================================================
+        # annots = torch.cat([annots[0], torch.ones(annots[0].shape[0])[:, None]], axis=1)
+        # annots = np.roll(annots.numpy(), shift=2, axis=1)
+        # ==============================================================================================================
+
+        # HARD WAY =====================================================================================================
         boxes = torch.tensor([])
         num_anchors_per_scale: int = labels[0].shape[1]  # 3
 
@@ -177,6 +183,8 @@ def _test():
         # nms_boxes = boxes[_nms_indexes].numpy()
 
         print(nms_boxes)
+        # ==============================================================================================================
+
         plot_image(imgs[0].permute(1, 2, 0), nms_boxes, box_format='cxcywh')  # RGB --> BRG
 
 
