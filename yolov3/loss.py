@@ -12,8 +12,14 @@ class YoloLoss(nn.Module):
         self.cee = nn.CrossEntropyLoss()
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, predictions, targets, scaled_anchors):  # targets = (conf, cx, cy, w, h, cls)
+    def forward(self, predictions, targets, scaled_anchors):
+        """
+        predictions & targets cx, cy stores cell-wise coordinate (0~1)
+        predictions = (N, 3, 13, 13, 5+num_cls), [conf, cx, cy, w, h, (classes ...)]
+        targets = (N, 3, 13, 13, 6), [conf, cx, cy, w, h, cls]
+        """
         _device = predictions[0].device
+
         # ignore if target[..., 0] == -1
         obj = targets[..., 0] == 1  # in paper this is Iobj_i
         noobj = targets[..., 0] == 0  # in paper this is Inoobj_i

@@ -48,7 +48,8 @@ class VOCDataset(torch.utils.data.Dataset):
         """
         read annotation file and assign it to the best fitting anchor box and return it as label
         return - imgs(N, C, H, W)
-               - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]) (obj_prob, cx, cy, w, h, class)
+               - targets([(3, 13, 13, 6), (3, 26, 26, 6), (3, 52, 52, 6)]), (conf, cx, cy, w, h, class)
+                    cx, cy --> cell-wise coordinates (see line 105)
                - annotations(num_boxes, 6) (IMG_INDEX, cx, cy, w, h, class)
                NOTE: cx, cy, w, h are 0~1 normalized
         """
@@ -87,14 +88,12 @@ class VOCDataset(torch.utils.data.Dataset):
                 # iou between a current bbox and all the anchor box candidates
                 iou_anchors = label_anchor_likelihood(torch.tensor(box[2:4]), self.anchors)  # (9,)
                 anchor_indices = iou_anchors.argsort(descending=True, dim=0)  # argsort its likelihood indexes
-                has_anchor = [
-                                 False] * self.num_anchors_per_scale  # each scale prediction (small, medium, big) can have only one anchor box
+                has_anchor = [False] * self.num_anchors_per_scale  # each scale prediction (small, medium, big) can have only one anchor box
 
                 for anchor_idx in anchor_indices:  # high likelihood anchor box --> low likelihood anchor box
                     # which scale does this anchor belong to (small, medium, big)
                     scale_idx: int = torch.div(anchor_idx, self.num_anchors_per_scale, rounding_mode='trunc').item()
-                    anchor_on_scale: int = (
-                                anchor_idx % self.num_anchors_per_scale).item()  # which anchor within the selected scale?
+                    anchor_on_scale: int = (anchor_idx % self.num_anchors_per_scale).item()  # which anchor within the selected scale?
 
                     _S = self.S[scale_idx]  # 13, 26, 52
                     i, j = int(_S * y), int(_S * x)  # which cell
@@ -103,7 +102,7 @@ class VOCDataset(torch.utils.data.Dataset):
                     if not anchor_taken and not has_anchor[scale_idx]:  # obj prob == 0 && has_anchor[scale_idx] == F
                         targets[scale_idx][anchor_on_scale, i, j, 0] = 1  # set object prob to 1 (occupied)
 
-                        x_cell, y_cell = _S * x - j, _S * y - i  # cell-wise x, y coordinate [0~1]
+                        x_cell, y_cell = _S * x - j, _S * y - i  # cell-wise cx, cy coordinate [0~1]
                         w_cell, h_cell = (
                             width * _S,
                             height * _S,
@@ -111,7 +110,7 @@ class VOCDataset(torch.utils.data.Dataset):
                         _box_coordinates = torch.tensor(
                             [x_cell, y_cell, w_cell, h_cell]
                         )
-                        targets[scale_idx][anchor_on_scale, i, j, 1:5] = _box_coordinates  # set x,y,w,h [0~1] [0~S]
+                        targets[scale_idx][anchor_on_scale, i, j, 1:5] = _box_coordinates  # set cx,cy,w,h [0~1] [0~S]
                         targets[scale_idx][anchor_on_scale, i, j, 5] = int(class_label)
                         has_anchor[scale_idx] = True  # obj marked in this scale move on to the next scale
 
