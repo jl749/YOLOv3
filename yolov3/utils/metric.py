@@ -112,6 +112,7 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
             # match label -- detection (one2one)
             matches = matches[torch.argsort(matches[:, 2], descending=True)]  # sort by ious
             matches = matches[_unique(matches[:, 1])[1]]  # sort by detection index (if dup keep first observed, drop rest)
+            matches = matches[torch.argsort(matches[:, 2], descending=True)]  # sort by ious
             matches = matches[_unique(matches[:, 0])[1]]  # sort by label index  (if dup keep first observed, drop rest)
             _TP[matches[:, 1].long()] = True  # TODO: matches[:, 2] > iou_thresh for multiple iou_thresh
         stats.append((_TP, p[:, 1], p[:, 0], t[:, -1]))
@@ -142,10 +143,10 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
 
         _recalls = TP_cumsum / (total_labels + 1e-16)  # TP_cumsum / total_GT_boxes (TP + FN)
         _precisions = TP_cumsum / (TP_cumsum + FP_cumsum)  # TP_cumsum / TP + FP
+
+        # https://github.com/ultralytics/yolov5/blob/e808f2267d0164edb7bc45588c4fcda68c3dd8cb/utils/metrics.py#L107-L112
         _precisions = torch.cat([torch.tensor([1], device=_device), _precisions, torch.tensor([0], device=_device)])
         _recalls = torch.cat([torch.tensor([0], device=_device), _recalls, torch.tensor([1], device=_device)])
-
-        # cummax precision
         _precisions = torch.flip(torch.cummax(torch.flip(_precisions, dims=(0,)), dim=0)[0], dims=(0,))
 
         # DBUGGING =====================================================================================================
@@ -159,9 +160,14 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         # plt.close()
         # ==============================================================================================================
 
-        # AP = torch.trapz(y=_precisions, x=_recalls)
-        x_ = torch.linspace(0, 1, 101).to(_device)  # 101-point interp (COCO)
-        AP = torch.trapz(y=_interp(x_, _recalls, _precisions), x=x_)
+        # AP = torch.trapz(y=_precisions, x=_recalls)  # without interp or cummax (VOC2010)
+        # or
+        # x_ = torch.linspace(0, 1, 101).to(_device)  # 101-point interp (COCO), 11-point interp (VOC2007)
+        # AP = torch.trapz(y=_interp(x_, _recalls, _precisions), x=x_)  # or torch.mean(_interp(x_, _recalls, _precisions)), interpolation may add noise
+        # or
+        _i = torch.where(_recalls[1:] != _recalls[:-1])[0]  # points where x-axis (recall) changes
+        AP = torch.sum((_recalls[_i + 1] - _recalls[_i]) * _precisions[_i + 1])  # area under curve
+
         APs_per_class[c.long()] = AP.item()
         recalls_per_class[c.long()] = _TP_c.sum().item() / total_labels  # TP / TP + FN
         precisions_per_class[c.long()] = _TP_c.sum().item() / total_preds  # TP / TP + FP
