@@ -1,4 +1,3 @@
-from itertools import chain
 from typing import List
 
 from tqdm import tqdm
@@ -63,7 +62,7 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
     :param iou_threshold: iou_threshold to determine TP, FP
     """
     _device = pred_boxes[0].device
-    mAPs_per_class = [0] * num_classes
+    APs_per_class = [0] * num_classes
     recalls_per_class = [0] * num_classes
     precisions_per_class = [0] * num_classes
 
@@ -72,6 +71,30 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         perm = torch.arange(inverse.size(dim), dtype=inverse.dtype, device=inverse.device)
         inverse, perm = inverse.flip([dim]), perm.flip([dim])
         return unique, inverse.new_empty(unique.size(dim)).scatter_(dim, inverse, perm)
+
+    def _interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
+        """One-dimensional linear interpolation for monotonically increasing sample
+        points.
+
+        Returns the one-dimensional piecewise linear interpolant to a function with
+        given discrete data points :math:`(xp, fp)`, evaluated at :math:`x`.
+
+        Args:
+            x: the :math:`x`-coordinates at which to evaluate the interpolated
+                values.
+            xp: the :math:`x`-coordinates of the data points, must be increasing.
+            fp: the :math:`y`-coordinates of the data points, same length as `xp`.
+
+        Returns:
+            the interpolated values, same size as `x`.
+        """
+        m = (fp[1:] - fp[:-1]) / (xp[1:] - xp[:-1])
+        b = fp[:-1] - (m * xp[:-1])
+
+        indicies = torch.sum(torch.ge(x[:, None], xp[None, :]), 1) - 1
+        indicies = torch.clamp(indicies, 0, len(m) - 1)
+
+        return m[indicies] * x + b[indicies]
 
     stats = []
     for p, t in zip(pred_boxes, true_boxes):
@@ -122,9 +145,25 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         _precisions = torch.cat([torch.tensor([1], device=_device), _precisions, torch.tensor([0], device=_device)])
         _recalls = torch.cat([torch.tensor([0], device=_device), _recalls, torch.tensor([1], device=_device)])
 
-        mAP = torch.trapz(y=_precisions, x=_recalls)
-        mAPs_per_class[c.long()] = mAP.item()
+        # cummax precision
+        _precisions = torch.flip(torch.cummax(torch.flip(_precisions, dims=(0,)), dim=0)[0], dims=(0,))
+
+        # DBUGGING =====================================================================================================
+        # import matplotlib.pyplot as plt
+        # plt.plot(_recalls.cpu().numpy(), _precisions.cpu().numpy(), c="blue")
+        # plt.xlabel("recall")
+        # plt.ylabel("precision")
+        # plt.title(f"mAP_{iou_threshold}")
+        # plt.grid(color="gray")
+        # plt.show()
+        # plt.close()
+        # ==============================================================================================================
+
+        # AP = torch.trapz(y=_precisions, x=_recalls)
+        x_ = torch.linspace(0, 1, 101).to(_device)  # 101-point interp (COCO)
+        AP = torch.trapz(y=_interp(x_, _recalls, _precisions), x=x_)
+        APs_per_class[c.long()] = AP.item()
         recalls_per_class[c.long()] = _TP_c.sum().item() / total_labels  # TP / TP + FN
         precisions_per_class[c.long()] = _TP_c.sum().item() / total_preds  # TP / TP + FP
 
-    return mAPs_per_class, recalls_per_class, precisions_per_class
+    return APs_per_class, recalls_per_class, precisions_per_class

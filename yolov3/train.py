@@ -117,13 +117,13 @@ def eval_func(test_loader: torch.utils.data.DataLoader,
         conf_threshold=args.conf_threshold,
     )
 
-    mAPs_per_class, recalls_per_class, precisions_per_class = mean_average_precision(
+    APs_per_class, recalls_per_class, precisions_per_class = mean_average_precision(
         pred_boxes,
         true_boxes,
         iou_threshold=args.iou_threshold,
         num_classes=args.num_classes,
     )
-    print(f"mAP: {sum(mAPs_per_class) / len(mAPs_per_class)}")
+    print(f"mAP: {sum(APs_per_class) / len(APs_per_class)}")
     print(f"recall: {sum(recalls_per_class) / len(recalls_per_class)}")
     print(f"precision: {sum(precisions_per_class) / len(precisions_per_class)}")
 
