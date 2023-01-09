@@ -50,7 +50,7 @@ def check_class_accuracy(model: torch.nn.Module,
 
 
 def mean_average_precision(pred_boxes: List[torch.Tensor],
-                           true_boxes: List[torch.Tensor],
+                           true_boxes: List[torch.Tensor],  # TODO: drop invalid labels (e.g. xyxy with minus area)
                            num_classes: int = 20,
                            iou_threshold: float = 0.5,
                            ):
@@ -69,7 +69,7 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
     def _unique(x, dim=-1):  # return firstly appeared unique elements' indices
         unique, inverse = torch.unique(x, return_inverse=True, dim=dim)
         perm = torch.arange(inverse.size(dim), dtype=inverse.dtype, device=inverse.device)
-        inverse, perm = inverse.flip([dim]), perm.flip([dim])
+        # inverse, perm = inverse.flip([dim]), perm.flip([dim])
         return unique, inverse.new_empty(unique.size(dim)).scatter_(dim, inverse, perm)
 
     def _interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
@@ -141,8 +141,8 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
         TP_cumsum = torch.cumsum(TP[_sorted_index_c], dim=0)
         FP_cumsum = torch.cumsum(~TP[_sorted_index_c], dim=0)
 
-        _recalls = TP_cumsum / (total_labels + 1e-16)  # TP_cumsum / total_GT_boxes (TP + FN)
-        _precisions = TP_cumsum / (TP_cumsum + FP_cumsum)  # TP_cumsum / TP + FP
+        _recalls = TP_cumsum / total_labels  # TP_cumsum / total_GT_boxes (TP + FN)
+        _precisions = TP_cumsum / (TP_cumsum + FP_cumsum + torch.finfo(torch.float64).eps)  # TP_cumsum / TP + FP
 
         # https://github.com/ultralytics/yolov5/blob/e808f2267d0164edb7bc45588c4fcda68c3dd8cb/utils/metrics.py#L107-L112
         _precisions = torch.cat([torch.tensor([1], device=_device), _precisions, torch.tensor([0], device=_device)])
@@ -162,11 +162,11 @@ def mean_average_precision(pred_boxes: List[torch.Tensor],
 
         # AP = torch.trapz(y=_precisions, x=_recalls)  # without interp or cummax (VOC2010)
         # or
-        # x_ = torch.linspace(0, 1, 101).to(_device)  # 101-point interp (COCO), 11-point interp (VOC2007)
-        # AP = torch.trapz(y=_interp(x_, _recalls, _precisions), x=x_)  # or torch.mean(_interp(x_, _recalls, _precisions)), interpolation may add noise
+        x_ = torch.linspace(0, 1, 101).to(_device)  # 101-point interp (COCO), 11-point interp (VOC2007)
+        AP = torch.trapz(y=_interp(x_, _recalls, _precisions), x=x_)  # or torch.mean(_interp(x_, _recalls, _precisions)), interpolation may add noise
         # or
-        _i = torch.where(_recalls[1:] != _recalls[:-1])[0]  # points where x-axis (recall) changes
-        AP = torch.sum((_recalls[_i + 1] - _recalls[_i]) * _precisions[_i + 1])  # area under curve
+        # _i = torch.where(_recalls[1:] != _recalls[:-1])[0]  # points where x-axis (recall) changes
+        # AP = torch.sum((_recalls[_i + 1] - _recalls[_i]) * _precisions[_i + 1])  # area under curve
 
         APs_per_class[c.long()] = AP.item()
         recalls_per_class[c.long()] = _TP_c.sum().item() / total_labels  # TP / TP + FN
