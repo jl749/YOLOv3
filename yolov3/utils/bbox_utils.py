@@ -94,7 +94,7 @@ def get_evaluation_bboxes(
         # decode label (N, num_anchors, S, S, 6) to obtain annotation
         # true_bboxes = cells_to_bboxes(labels[-1], scaled_anchors[-1])
         for annot in annots:
-            annot[:4] = cxcywh2xyxy(annot[:4])
+            annot[:, :4] = cxcywh2xyxy(annot[:, :4])
         all_true_boxes.extend(annots)
 
         for idx in range(N):
