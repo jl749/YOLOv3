@@ -23,13 +23,13 @@ class VOCDataset(torch.utils.data.Dataset):
                  label_dir: Path,
                  anchors=None,
                  img_size=416, num_classes=20,
-                 transform: Callable = lambda _: ToTensorV2(),
+                 transform: Callable = None,
                  ):
         self.C = num_classes
         self.annotations: pd.DataFrame = pd.read_csv(csv_file, header=None)
         self.img_dir = img_dir
         self.label_dir = label_dir
-        self.transform = transform(img_size)
+        self.transform = transform(img_size) if transform else ToTensorV2()
 
         # anchors[0] contains the largest, anchors[2] contains the smallest object scales
         if anchors is None:
@@ -66,10 +66,10 @@ class VOCDataset(torch.utils.data.Dataset):
         image = cv2.imread(img_path)  # HWC
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # np.flip(image, 2)
 
-        if self.transform:
-            augmentations = self.transform(image=image, bboxes=bboxes)
-            image: Tensor = augmentations["image"]  # CHW
-            bboxes: List[tuple] = augmentations["bboxes"]
+        _augmentations = self.transform(image=image, bboxes=bboxes)
+        image: Tensor = _augmentations["image"]  # CHW
+        bboxes: List[tuple] = _augmentations["bboxes"]
+
         annotations = torch.tensor(bboxes, dtype=torch.float32)
 
         if self.anchors is None:
@@ -136,56 +136,54 @@ class VOCDataset(torch.utils.data.Dataset):
         return torch.stack(img_batch, dim=0), [torch.stack(t) for t in target_batch], annot_batch
 
 
-def _test():
-    BASE_DIR = Path(__file__).parent.parent.parent
-    img_size = 416
-    anchors = ANCHORS  # (3, 3 ,2), contains width height ratio
-    # 3 scale predictions, 3 anchor boxes per cell
-
-    from yolov3.datasets import get_train_transforms, get_test_transforms
-
-    dataset = VOCDataset(
-        BASE_DIR.joinpath("data/train.csv"),
-        BASE_DIR.joinpath("data/images/"),
-        BASE_DIR.joinpath("data/labels/"),
-        anchors=anchors,
-        transform=get_test_transforms,
-        img_size=img_size
-    )
-
-    loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True)
-    for imgs, labels, annots in loader:
-        # EASY WAY =====================================================================================================
-        # annots = torch.cat([annots[0], torch.ones(annots[0].shape[0])[:, None]], axis=1)
-        # annots = np.roll(annots.numpy(), shift=2, axis=1)
-        # ==============================================================================================================
-
-        # HARD WAY =====================================================================================================
-        boxes = torch.tensor([])
-        num_anchors_per_scale: int = labels[0].shape[1]  # 3
-
-        # small, medium, big predictions into 0~1 scale again and plot bboxes
-        for i in range(num_anchors_per_scale):  # i = 0, 1, 2
-            print(labels[i].shape)
-
-            _label_bboxes = cells_to_bboxes(labels[i])[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
-
-            boxes = torch.cat([boxes, _label_bboxes], dim=0)  # cxcywh
-
-        from yolov3.utils import non_max_suppression as nms
-        nms_boxes = nms(boxes.tolist(), iou_threshold=1, obj_threshold=0.7, box_format="midpoint")
-        nms_boxes = np.array(nms_boxes)
-
-        # import torchvision
-        # boxes = boxes[boxes[:, 1] > 0.7]  # filter by conf_threshold  # TODO: torchvision nms takes xyxy only
-        # _nms_indexes = torchvision.ops.nms(boxes=boxes[:, 2:], scores=boxes[:, 1], iou_threshold=1)
-        # nms_boxes = boxes[_nms_indexes].numpy()
-
-        print(nms_boxes)
-        # ==============================================================================================================
-
-        plot_image(imgs[0].permute(1, 2, 0), nms_boxes, box_format='cxcywh')  # RGB --> BRG
-
-
 if __name__ == "__main__":
+    def _test():
+        BASE_DIR = Path(__file__).parent.parent.parent
+        img_size = 416
+        anchors = ANCHORS  # (3, 3 ,2), contains width height ratio
+        # 3 scale predictions, 3 anchor boxes per cell
+
+        from yolov3.datasets import get_train_transforms, get_test_transforms
+
+        dataset = VOCDataset(
+            BASE_DIR.joinpath("data/train.csv"),
+            BASE_DIR.joinpath("data/images/"),
+            BASE_DIR.joinpath("data/labels/"),
+            anchors=anchors,
+            transform=get_test_transforms,
+            img_size=img_size
+        )
+
+        loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True)
+        for imgs, labels, annots in loader:
+            # EASY WAY =====================================================================================================
+            # annots = torch.cat([annots[0], torch.ones(annots[0].shape[0])[:, None]], axis=1)
+            # annots = np.roll(annots.numpy(), shift=2, axis=1)
+            # ==============================================================================================================
+
+            # HARD WAY =====================================================================================================
+            boxes = torch.tensor([])
+            num_anchors_per_scale: int = labels[0].shape[1]  # 3
+
+            # small, medium, big predictions into 0~1 scale again and plot bboxes
+            for i in range(num_anchors_per_scale):  # i = 0, 1, 2
+                print(labels[i].shape)
+
+                _label_bboxes = cells_to_bboxes(labels[i])[0]  # batchsize = 1 for visualization, return (N, S*S*3, 6)
+
+                boxes = torch.cat([boxes, _label_bboxes], dim=0)  # cxcywh
+
+            from yolov3.utils import non_max_suppression as nms
+            nms_boxes = nms(boxes.tolist(), iou_threshold=1, obj_threshold=0.7, box_format="midpoint")
+            nms_boxes = np.array(nms_boxes)
+
+            # import torchvision
+            # boxes = boxes[boxes[:, 1] > 0.7]  # filter by conf_threshold  # TODO: torchvision nms takes xyxy only
+            # _nms_indexes = torchvision.ops.nms(boxes=boxes[:, 2:], scores=boxes[:, 1], iou_threshold=1)
+            # nms_boxes = boxes[_nms_indexes].numpy()
+
+            print(nms_boxes)
+            # ==============================================================================================================
+
+            plot_image(imgs[0].permute(1, 2, 0), nms_boxes, box_format='cxcywh')  # RGB --> BRG
     _test()
