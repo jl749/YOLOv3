@@ -175,6 +175,8 @@ def main():
     data_dir = data_dir.joinpath("VOCdevkit")  # update data_dir
     image_ids_per_set = {}
     for year, image_set in sets:
+        _key = f"{year}_{image_set}"
+
         _data_dir = data_dir.joinpath(f"VOC{year}")
         label_dir = _data_dir.joinpath("labels")
         label_dir.mkdir(parents=True, exist_ok=True)
@@ -183,9 +185,10 @@ def main():
         with image_id_dir.open("r") as fp:
             image_ids = fp.read().strip().split()
 
-        image_ids_per_set[f"{year}_{image_set}"] = image_ids
+        image_ids_per_set[_key] = []
         for _id in image_ids:
             convert_annotation(_data_dir, _id)
+            image_ids_per_set[_key].append(_data_dir.joinpath("JPEGImages", _id).resolve())
 
     """
     Get train by using train+val from 2007 and 2012
@@ -203,24 +206,24 @@ def main():
 
     test_ids = image_ids_per_set["2007_test"]
 
-    with data_dir.joinpath("train.csv").open(mode="w", newline="") as train_file:
-        for line in train_ids:
-            image_file = line.split("/")[-1].replace("\n", "")
-            text_file = image_file.replace(".jpg", ".txt")
+    dest_dir = data_dir.parent
+    with dest_dir.joinpath("train.csv").open(mode="w", newline="") as train_file:
+        for _id in train_ids:
+            image_file = _id.with_suffix(".jpg")
+            text_file = _id.with_suffix(".txt")
             data = [image_file, text_file]
             writer = csv.writer(train_file)
             writer.writerow(data)
 
-    with data_dir.joinpath("test.csv").open(mode="w", newline="") as train_file:
-        for line in test_ids:
-            image_file = line.split("/")[-1].replace("\n", "")
-            text_file = image_file.replace(".jpg", ".txt")
+    with dest_dir.joinpath("test.csv").open(mode="w", newline="") as train_file:
+        for _id in test_ids:
+            image_file = _id.with_suffix(".jpg")
+            text_file = _id.with_suffix(".txt")
             data = [image_file, text_file]
             writer = csv.writer(train_file)
             writer.writerow(data)
 
     """postprocess"""
-    dest_dir = data_dir.parent
     img_dir = dest_dir.joinpath("images")
     label_dir = dest_dir.joinpath("labels")
     img_dir.mkdir(parents=True, exist_ok=True)
