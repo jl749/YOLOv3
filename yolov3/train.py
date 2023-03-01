@@ -10,8 +10,8 @@ from tqdm import tqdm
 import torch
 import torch.optim as optim
 
-from model import YOLOv3
-from loss import YoloLoss
+from yolov3.model import YOLOv3
+from yolov3.loss import YoloLoss
 from yolov3.utils import (
     mean_average_precision,
     get_evaluation_bboxes,
