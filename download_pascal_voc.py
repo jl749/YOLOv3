@@ -173,6 +173,7 @@ def main():
             tar.extractall(str(_data_dir.parent))
 
     data_dir = data_dir.joinpath("VOCdevkit")  # update data_dir
+    image_ids_per_set = {}
     for year, image_set in sets:
         _data_dir = data_dir.joinpath(f"VOC{year}")
         label_dir = _data_dir.joinpath("labels")
@@ -182,11 +183,9 @@ def main():
         with image_id_dir.open("r") as fp:
             image_ids = fp.read().strip().split()
 
-        fp = data_dir.joinpath(f"{year}_{image_set}.txt").open("w")
+        image_ids_per_set[f"{year}_{image_set}"] = image_ids
         for _id in image_ids:
-            fp.write(str(_data_dir.joinpath("JPEGImages", _id).resolve()) + "\n")
             convert_annotation(_data_dir, _id)
-        fp.close()
 
     """
     Get train by using train+val from 2007 and 2012
@@ -197,18 +196,12 @@ def main():
     cp 2007_test.txt test.txt
     rm 2007* 2012*
     """
-    train_ids = []
-    with data_dir.joinpath("2007_train.txt").open("r") as fp:
-        train_ids.extend(fp.read().strip().split())
-    with data_dir.joinpath("2007_val.txt").open("r") as fp:
-        train_ids.extend(fp.read().strip().split())
-    with data_dir.joinpath("2012_train.txt").open("r") as fp:
-        train_ids.extend(fp.read().strip().split())
-    with data_dir.joinpath("2012_val.txt").open("r") as fp:
-        train_ids.extend(fp.read().strip().split())
+    train_ids = image_ids_per_set["2007_train"] + \
+                image_ids_per_set["2007_val"] + \
+                image_ids_per_set["2012_train"] + \
+                image_ids_per_set["2012_val"]
 
-    with data_dir.joinpath("2007_test.txt").open("r") as fp:
-        test_ids = fp.read().strip().split()
+    test_ids = image_ids_per_set["2007_test"]
 
     with data_dir.joinpath("train.csv").open(mode="w", newline="") as train_file:
         for line in train_ids:
