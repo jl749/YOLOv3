@@ -188,7 +188,7 @@ def main():
         image_ids_per_set[_key] = []
         for _id in image_ids:
             convert_annotation(_data_dir, _id)
-            image_ids_per_set[_key].append(_data_dir.joinpath("JPEGImages", _id).resolve())
+            image_ids_per_set[_key].append(_id)
 
     """
     Get train by using train+val from 2007 and 2012
@@ -209,16 +209,16 @@ def main():
     dest_dir = data_dir.parent
     with dest_dir.joinpath("train.csv").open(mode="w", newline="") as train_file:
         for _id in train_ids:
-            image_file = _id.with_suffix(".jpg")
-            text_file = _id.with_suffix(".txt")
+            image_file = f"{_id}.jpg"
+            text_file = f"{_id}.txt"
             data = [image_file, text_file]
             writer = csv.writer(train_file)
             writer.writerow(data)
 
     with dest_dir.joinpath("test.csv").open(mode="w", newline="") as train_file:
         for _id in test_ids:
-            image_file = _id.with_suffix(".jpg")
-            text_file = _id.with_suffix(".txt")
+            image_file = f"{_id}.jpg"
+            text_file = f"{_id}.txt"
             data = [image_file, text_file]
             writer = csv.writer(train_file)
             writer.writerow(data)
