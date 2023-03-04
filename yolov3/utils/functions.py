@@ -99,10 +99,10 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr) -> None:
 
 def save_loss_plot(losses: List[Tuple[float, float, float, float]]):
     # log scale
-    box_losses = [math.log(_[0]+1) for _ in losses]
-    obj_losses = [math.log(_[1]+1) for _ in losses]
-    no_obj_losses = [math.log(_[2]+1) for _ in losses]
-    class_losses = [math.log(_[3]+1) for _ in losses]
+    box_losses = [_[0] for _ in losses]
+    obj_losses = [_[1] for _ in losses]
+    no_obj_losses = [_[2] for _ in losses]
+    class_losses = [_[3] for _ in losses]
     plt.plot(box_losses, c="red", label="box_loss")
     plt.plot(obj_losses, c="blue", label="obj_loss")
     plt.plot(no_obj_losses, c="green", label="no_obj_loss")
