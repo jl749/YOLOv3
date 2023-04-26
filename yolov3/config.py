@@ -1,12 +1,9 @@
+import torch
+import numpy as np
+
 import os
 import random
 from pathlib import Path
-import albumentations as A
-import cv2
-import numpy as np
-import torch
-
-from albumentations.pytorch import ToTensorV2
 
 
 def seed_everything(seed=42):
@@ -20,79 +17,25 @@ def seed_everything(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
+# seed_everything()  # uncomment for deterministic behavior
+
+# Constants signifying how much to pay for each respective part of the loss
+LAMBDA_CLASS = 1
+LAMBDA_NOOBJ = 10
+LAMBDA_OBJ = 1
+LAMBDA_BOX = 10
+
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR.joinpath('data')
 IMG_DIR = DATA_DIR.joinpath("images")
 LABEL_DIR = DATA_DIR.joinpath("labels")
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-# seed_everything()  # If you want deterministic behavior
-NUM_WORKERS = 4
-BATCH_SIZE = 32
-IMAGE_SIZE = 416
-NUM_CLASSES = 20
-LEARNING_RATE = 1e-5
-WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 300
-CONF_THRESHOLD = 0.6
-MAP_IOU_THRESH = 0.5
-NMS_IOU_THRESH = 0.45
-S = [IMAGE_SIZE // 32, IMAGE_SIZE // 16, IMAGE_SIZE // 8]
-PIN_MEMORY = True  # train on GPU, dataloader --> GPU
-LOAD_MODEL = True
-SAVE_MODEL = True
-# CHECKPOINT_FILE = "yolov3_pascal_78.1map.pth.tar"
-CHECKPOINT_FILE = "checkpoint.pth.tar"
 
 ANCHORS = [
     [(0.28, 0.22), (0.38, 0.48), (0.9, 0.78)],
     [(0.07, 0.15), (0.15, 0.11), (0.14, 0.29)],
     [(0.02, 0.03), (0.04, 0.07), (0.08, 0.06)],
 ]  # [0, 1] normalized
-
-scale = 1.1
-train_transforms = A.Compose(
-    [
-        A.LongestMaxSize(max_size=int(IMAGE_SIZE * scale)),
-        A.PadIfNeeded(
-            min_height=int(IMAGE_SIZE * scale),
-            min_width=int(IMAGE_SIZE * scale),
-            border_mode=cv2.BORDER_CONSTANT,
-        ),
-        A.RandomCrop(width=IMAGE_SIZE, height=IMAGE_SIZE),
-        A.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.6, hue=0.6, p=0.4),
-        A.OneOf(
-            [
-                A.ShiftScaleRotate(
-                    rotate_limit=20, p=0.5, border_mode=cv2.BORDER_CONSTANT
-                ),
-                # A.IAAAffine(shear=15, p=0.5, mode="constant"),
-                A.GaussNoise(),
-            ],
-            p=1.0,
-        ),
-        A.HorizontalFlip(p=0.5),
-        A.Blur(p=0.1),
-        A.CLAHE(p=0.1),
-        A.Posterize(p=0.1),
-        A.ToGray(p=0.1),
-        A.ChannelShuffle(p=0.05),
-        A.Normalize(mean=[0, 0, 0], std=[1, 1, 1], max_pixel_value=255, ),
-        ToTensorV2(),
-    ],
-    bbox_params=A.BboxParams(format="yolo", min_visibility=0.4, label_fields=[], ),
-)
-test_transforms = A.Compose(
-    [
-        A.LongestMaxSize(max_size=IMAGE_SIZE),  # keep the ratio & clip hw length
-        A.PadIfNeeded(  # pad image if hw < min_height, min_width
-            min_height=IMAGE_SIZE, min_width=IMAGE_SIZE, border_mode=cv2.BORDER_CONSTANT
-        ),
-        A.Normalize(mean=[0, 0, 0], std=[1, 1, 1], max_pixel_value=255),
-        ToTensorV2(),
-    ],
-    bbox_params=A.BboxParams(format="yolo", min_visibility=0.4, label_fields=[]),
-)
 
 PASCAL_CLASSES = [
     "aeroplane",

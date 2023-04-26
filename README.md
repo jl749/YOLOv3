@@ -5,5 +5,5 @@
 ![](https://github.com/jl749/YOLOv3/blob/master/output_example.png)
 
 
-## dataset (PASCAL VOC in YOLO format)
+## dataset (PASCAL VOC in YOLO format [cx, cy, w, h])
 https://www.kaggle.com/dataset/734b7bcb7ef13a045cbdd007a3c19874c2586ed0b02b4afc86126e89d00af8d2
