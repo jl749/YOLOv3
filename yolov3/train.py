@@ -10,6 +10,7 @@ from tqdm import tqdm
 import torch
 import torch.optim as optim
 
+import sys;sys.path.append(str(Path(__file__).parent.parent))  # TODO: temporary
 from yolov3.model import YOLOv3
 from yolov3.loss import YoloLoss
 from yolov3.utils import (
@@ -55,6 +56,7 @@ device = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
 torch.backends.cudnn.benchmark = True
 DATA_DIR = Path(args.data_dir)
 
+
 def train_fn(train_loader: torch.utils.data.DataLoader,
              model: torch.nn.Module,
              optimizer: torch.optim.Optimizer,
@@ -76,7 +78,7 @@ def train_fn(train_loader: torch.utils.data.DataLoader,
             labels[2].to(device),  # (3, 52, 52, 6)
         )
 
-        with torch.cuda.amp.autocast():  # float16 forward pass
+        with torch.cuda.amp.autocast():  # AMP forward pass
             predictions = model(img_batch)  # [(N, 3, 13, 13, 5+num_cls), (N, 3, 26, 26, 5+num_cls), (N, 3, 52, 52, 5+num_cls)]
             _loss1: tuple = criterion(predictions[0], labels[0], scaled_anchors[0])
             _loss2: tuple = criterion(predictions[1], labels[1], scaled_anchors[1])
@@ -145,7 +147,7 @@ def main():
     criterion = YoloLoss()
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.cuda.amp.GradScaler()  # prevent gradients with small magnitudes flushing to zero
 
     train_loader, test_loader, train_eval_loader = get_loaders(
         train_csv_path=DATA_DIR.joinpath("train.csv"),
