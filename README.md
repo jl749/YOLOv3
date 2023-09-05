@@ -1,8 +1,6 @@
 # YOLOv3
 minimal implementation of [YOLOv3](https://arxiv.org/pdf/1804.02767.pdf) in pytorch. 
 
-whole point of practice was to understand fundamental concept of YOLO architecture.
-
 run the following command to start training on the default setting.
 ```commandline
 python3 yolov3/train.py
@@ -28,7 +26,7 @@ original code from https://github.com/aladdinpersson/Machine-Learning-Collection
 
 
 ## TODO
-- [ ] fix mAP error (current code do not produce the exact same result as torchmetric)
+- [ ] fix mAP error (current implementation introduce minor numerical error compared to torchmetric)
 - [ ] add `coco.py` under `yolov3/datasets`
 - [ ] more augmentation methods (e.g. [pastein](https://github.com/conradry/copy-paste-aug), mosaic, mixup, ...)
-- [ ] [simOTA](https://github.com/yjh0410/FreeYOLO/blob/30ca71424c965bb61917e1a9579dabd71b55c64e/models/yolo_free/matcher.py#L8)
+- [ ] experiment [simOTA](https://github.com/yjh0410/FreeYOLO/blob/30ca71424c965bb61917e1a9579dabd71b55c64e/models/yolo_free/matcher.py#L8)
